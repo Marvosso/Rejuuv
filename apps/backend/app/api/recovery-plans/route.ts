@@ -2,9 +2,15 @@ import { NextResponse } from 'next/server';
 import { getRecoveryPlanPrompt } from '../../../prompts/recovery-plan-prompt';
 import { callClaude, extractJSON } from '../../../lib/claude';
 import { supabase } from '../../../lib/db';
+import { getUserIdFromRequest } from '../../../lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const user_id = await getUserIdFromRequest(request);
+    if (!user_id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // Parse the request body
     const { assessment, intake_data } = await request.json();
 
@@ -27,7 +33,6 @@ export async function POST(request: Request) {
     const recoveryPlan = extractJSON(recoveryPlanResponse);
 
     // Save plan to Supabase
-    const user_id = 'test-user-123';
     let planId: string | null = null;
 
     const { data: insertedPlan, error: dbError } = await supabase

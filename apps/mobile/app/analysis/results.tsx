@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { getSession } from '../../lib/auth';
 
 interface AnalysisData {
   summary: string;
@@ -44,11 +45,15 @@ export default function ResultsScreen() {
     setLoading(true);
 
     try {
+      const session = await getSession();
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
       const response = await fetch(`${apiUrl}/recovery-plans`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : {}),
         },
         body: JSON.stringify({
           assessment: analysis,

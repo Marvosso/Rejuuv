@@ -2,9 +2,15 @@ import { NextResponse } from 'next/server';
 import { getCheckInPrompt } from '../../../prompts/checkin-prompt';
 import { callClaude, extractJSON } from '../../../lib/claude';
 import { supabase } from '../../../lib/db';
+import { getUserIdFromRequest } from '../../../lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const user_id = await getUserIdFromRequest(request);
+    if (!user_id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // Parse the request body
     const {
       recovery_plan_id,
@@ -46,7 +52,6 @@ export async function POST(request: Request) {
     const checkInResult = extractJSON(checkInResponse);
 
     // Save check-in to Supabase
-    const user_id = 'test-user-123';
     let checkInId: string | null = null;
 
     const { data: insertedCheckIn, error: dbError } = await supabase

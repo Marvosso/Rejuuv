@@ -10,6 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter, useSearchParams } from 'expo-router';
+import { getSession } from '../../lib/auth';
 
 export default function CheckInScreen() {
   const router = useRouter();
@@ -47,11 +48,17 @@ export default function CheckInScreen() {
 
     setLoading(true);
     try {
+      const session = await getSession();
       const response = await fetch(
         `${process.env.EXPO_PUBLIC_API_URL}/check-ins`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token
+              ? { Authorization: `Bearer ${session.access_token}` }
+              : {}),
+          },
           body: JSON.stringify({
             pain_change: painChange,
             pain_level: painLevel,
