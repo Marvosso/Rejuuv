@@ -29,15 +29,18 @@ export async function callClaude(
   }
 }
 
-export function extractJSON(response: Anthropic.Messages.Message): any {
+export function extractJSON(response: any): any {
   try {
     // Extract text content from the response
-    const textContent = response.content
-      .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
-      .map((block) => block.text)
+    // The response from messages.create() has a content array
+    const content = response.content || [];
+    const textContent = content
+      .filter((block: any) => block.type === 'text')
+      .map((block: any) => block.text)
       .join('\n');
 
     if (!textContent) {
+      console.error('No text content found in Claude response. Response:', JSON.stringify(response, null, 2));
       throw new Error('No text content found in Claude response');
     }
 
@@ -57,6 +60,7 @@ export function extractJSON(response: Anthropic.Messages.Message): any {
     return JSON.parse(cleanedText.trim());
   } catch (error) {
     console.error('Error extracting JSON from Claude response:', error);
+    console.error('Raw response:', JSON.stringify(response, null, 2));
     throw error;
   }
 }

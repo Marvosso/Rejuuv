@@ -51,8 +51,8 @@ export default function ResultsScreen() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          intakeData,
-          analysis,
+          assessment: analysis,
+          intake_data: intakeData,
         }),
       });
 
@@ -63,10 +63,8 @@ export default function ResultsScreen() {
       const recoveryPlan = await response.json();
 
       // Navigate to recovery plan screen with the plan data
-      // Use base64 encoding to avoid URI encoding issues with complex JSON
-      const planJson = JSON.stringify(recoveryPlan);
-      const planData = encodeURIComponent(planJson);
-      router.push(`/recovery/plan?plan=${planData}`);
+      const planData = recoveryPlan;
+      router.push('/analysis/plan?' + new URLSearchParams({ plan: JSON.stringify(planData) }).toString());
     } catch (error) {
       console.error('Error generating recovery plan:', error);
       Alert.alert(
