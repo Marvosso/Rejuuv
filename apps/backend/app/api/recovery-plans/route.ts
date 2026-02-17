@@ -1,23 +1,24 @@
 import { NextResponse } from 'next/server';
-import { getRecoveryPlanPrompt } from '@/prompts/recovery-plan-prompt';
-import { callClaude, extractJSON } from '@/lib/claude';
+import { getRecoveryPlanPrompt } from '../../../prompts/recovery-plan-prompt';
+import { callClaude, extractJSON } from '../../../lib/claude';
+import { supabase } from '../../../lib/db';
 
 export async function POST(request: Request) {
   try {
     // Parse the request body
-    const { intakeData, analysis } = await request.json();
+    const { assessment, intake_data } = await request.json();
 
-    if (!intakeData || !analysis) {
+    if (!assessment || !intake_data) {
       return NextResponse.json(
         {
-          error: 'Missing required data: intakeData and analysis are required',
+          error: 'Missing required data: assessment and intake_data are required',
         },
         { status: 400 }
       );
     }
 
     // Generate recovery plan prompt
-    const recoveryPlanPrompt = getRecoveryPlanPrompt(intakeData, analysis);
+    const recoveryPlanPrompt = getRecoveryPlanPrompt(intake_data, assessment);
     const recoveryPlanResponse = await callClaude(
       recoveryPlanPrompt.system,
       recoveryPlanPrompt.user,
@@ -25,7 +26,30 @@ export async function POST(request: Request) {
     );
     const recoveryPlan = extractJSON(recoveryPlanResponse);
 
-    return NextResponse.json(recoveryPlan, { status: 200 });
+    // Save plan to Supabase
+    const user_id = 'test-user-123';
+    let planId: string | null = null;
+
+    const { data: insertedPlan, error: dbError } = await supabase
+      .from('recovery_plans')
+      .insert({
+        user_id,
+        body_area: intake_data.body_area,
+        assessment_data: JSON.stringify({ intake_data, assessment }),
+        plan_data: JSON.stringify(recoveryPlan),
+        phase: 1,
+        status: 'active',
+      })
+      .select('id')
+      .single();
+
+    if (dbError) {
+      console.error('Failed to save recovery plan to database:', dbError);
+    } else {
+      planId = insertedPlan.id;
+    }
+
+    return NextResponse.json({ ...recoveryPlan, id: planId }, { status: 200 });
   } catch (error) {
     console.error('Error in recovery plans route:', error);
     return NextResponse.json(
