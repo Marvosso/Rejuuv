@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         recovery_plan_id,
         pain_level,
         pain_change,
-        exercise_difficulty: difficulty,
+        difficulty,
         completed_activities: JSON.stringify(completed_activities || []),
         notes: notes || '',
         adjustments: JSON.stringify(checkInResult),

@@ -14,7 +14,7 @@ interface CheckInRecord {
   id: string;
   pain_level: number;
   pain_change: string;
-  exercise_difficulty: string;
+  difficulty: string;
   notes: string;
   adjustments: string; // JSON string
   created_at: string;
@@ -197,7 +197,7 @@ export default function PlanDetailScreen() {
                 </View>
                 <View style={styles.stat}>
                   <Text style={styles.statLabel}>Difficulty</Text>
-                  <Text style={styles.statValue}>{ci.exercise_difficulty}</Text>
+                  <Text style={styles.statValue}>{ci.difficulty}</Text>
                 </View>
               </View>
 

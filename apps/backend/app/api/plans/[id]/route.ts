@@ -33,7 +33,7 @@ export async function GET(
     const { data: checkIns, error: checkInsError } = await supabase
       .from('check_ins')
       .select(
-        'id, pain_level, pain_change, exercise_difficulty, completed_activities, notes, adjustments, created_at'
+        'id, pain_level, pain_change, difficulty, completed_activities, notes, adjustments, created_at'
       )
       .eq('recovery_plan_id', id)
       .order('created_at', { ascending: false });
