@@ -1,18 +1,25 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/db';
+import { getUserIdFromRequest } from '../../../../lib/auth';
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
+    const user_id = await getUserIdFromRequest(request);
+    if (!user_id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { id } = params;
 
-    // Fetch the recovery plan by ID
+    // Fetch the recovery plan by ID, scoped to the authenticated user
     const { data: plan, error: planError } = await supabase
       .from('recovery_plans')
       .select('id, plan_data, created_at, phase, status, body_area, user_id')
       .eq('id', id)
+      .eq('user_id', user_id)
       .single();
 
     if (planError || !plan) {

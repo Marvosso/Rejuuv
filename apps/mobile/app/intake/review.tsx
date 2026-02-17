@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { getSession } from '../../lib/auth';
 
 const BODY_AREA_COLORS: Record<string, string> = {
   neck: '#3B82F6',
@@ -45,16 +46,20 @@ export default function ReviewScreen() {
 
   const handleGetAnalysis = async () => {
     setLoading(true);
-    
+
     try {
+      const session = await getSession();
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
       console.log('Submitting to:', `${apiUrl}/assessments`);
       console.log('Intake data:', intakeData);
-      
+
       const response = await fetch(`${apiUrl}/assessments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : {}),
         },
         body: JSON.stringify(intakeData),
       });
@@ -72,12 +77,13 @@ export default function ReviewScreen() {
       console.log('Response data:', data);
 
       if (data.blocked === true) {
-        Alert.alert(
-          'Safety Alert',
-          `${data.message || 'We detected some concerning symptoms.'}\n\n${data.recommended_action || 'Please seek immediate medical attention.'}`,
-          [{ text: 'OK' }]
+        const safetyParam = encodeURIComponent(
+          JSON.stringify({
+            message: data.message || 'We detected some concerning symptoms.',
+            recommended_action: data.recommended_action || 'Please seek immediate medical attention.',
+          })
         );
-        setLoading(false);
+        router.push(`/intake/safety-alert?safety=${safetyParam}`);
         return;
       }
 
