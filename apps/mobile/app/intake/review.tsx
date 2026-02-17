@@ -50,8 +50,6 @@ export default function ReviewScreen() {
     try {
       const session = await getSession();
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-      console.log('Submitting to:', `${apiUrl}/assessments`);
-      console.log('Intake data:', intakeData);
 
       const response = await fetch(`${apiUrl}/assessments`, {
         method: 'POST',
@@ -64,17 +62,13 @@ export default function ReviewScreen() {
         body: JSON.stringify(intakeData),
       });
 
-      console.log('Response status:', response.status);
-      console.log('Response ok:', response.ok);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Response error:', errorText);
-        throw new Error(`Failed to submit assessment: ${response.status} ${errorText}`);
+        console.error('Assessment request failed:', errorText);
+        throw new Error(`Failed to submit assessment: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('Response data:', data);
 
       if (data.blocked === true) {
         const safetyParam = encodeURIComponent(
