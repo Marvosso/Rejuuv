@@ -33,7 +33,12 @@ export default function HomeScreen() {
           <Text style={styles.userEmail}>{user.email}</Text>
           <Link href="/intake/body-area" asChild>
             <TouchableOpacity style={styles.button} activeOpacity={0.7}>
-              <Text style={styles.buttonText}>Get Started</Text>
+              <Text style={styles.buttonText}>New Assessment</Text>
+            </TouchableOpacity>
+          </Link>
+          <Link href="/plans" asChild>
+            <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.7}>
+              <Text style={styles.secondaryButtonText}>My Plans</Text>
             </TouchableOpacity>
           </Link>
           <TouchableOpacity
@@ -102,6 +107,19 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  secondaryButton: {
+    marginTop: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 40,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#2563eb',
+  },
+  secondaryButtonText: {
+    color: '#2563eb',
+    fontSize: 16,
+    fontWeight: '600',
   },
   signOutButton: {
     marginTop: 16,
