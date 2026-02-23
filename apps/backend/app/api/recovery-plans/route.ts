@@ -3,6 +3,10 @@ import { getRecoveryPlanPrompt } from '../../../prompts/recovery-plan-prompt';
 import { callClaude, extractJSON } from '../../../lib/claude';
 import { supabase } from '../../../lib/db';
 import { getUserIdFromRequest } from '../../../lib/auth';
+import {
+  getUserSubscriptionStatus,
+  getUserPlanCount,
+} from '../../../lib/subscription';
 
 export async function POST(request: Request) {
   try {
@@ -10,6 +14,30 @@ export async function POST(request: Request) {
     if (!user_id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // ----------------------------------------------------------------
+    // Free-tier gating
+    // Free users may generate exactly ONE recovery plan.
+    // Creating a second plan (including regeneration) requires Pro.
+    // ----------------------------------------------------------------
+    const [{ isActive }, planCount] = await Promise.all([
+      getUserSubscriptionStatus(user_id),
+      getUserPlanCount(user_id),
+    ]);
+
+    if (!isActive && planCount >= 1) {
+      return NextResponse.json(
+        {
+          error: 'Free plan limit reached',
+          message:
+            'You have already generated a recovery plan on the free tier. ' +
+            'Upgrade to Pro ($19/month) for unlimited plan generation.',
+          upgrade_required: true,
+        },
+        { status: 403 }
+      );
+    }
+    // ----------------------------------------------------------------
 
     // Parse the request body
     const { assessment, intake_data } = await request.json();
