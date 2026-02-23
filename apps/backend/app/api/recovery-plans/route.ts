@@ -50,6 +50,10 @@ export async function POST(request: Request) {
 
     if (dbError) {
       console.error('Failed to save recovery plan to database:', dbError);
+      return NextResponse.json(
+        { error: 'Failed to save recovery plan', detail: dbError.message, code: dbError.code },
+        { status: 500 }
+      );
     } else {
       planId = insertedPlan.id;
     }

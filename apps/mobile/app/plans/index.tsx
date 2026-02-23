@@ -7,9 +7,11 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { getSession } from '../../lib/auth';
+import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
 
 interface Plan {
   id: string;
@@ -31,6 +33,8 @@ function bodyAreaLabel(area: string) {
   return area.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const PHASE_COLORS = ['', Colors.success, Colors.secondary, Colors.primary];
+
 export default function PlansListScreen() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -46,14 +50,10 @@ export default function PlansListScreen() {
       const response = await fetch(`${apiUrl}/plans`, {
         headers: {
           'Content-Type': 'application/json',
-          ...(session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : {}),
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
       });
-
       if (!response.ok) throw new Error('Failed to load plans');
-
       const data = await response.json();
       setPlans(data.plans ?? []);
     } catch (err) {
@@ -73,10 +73,41 @@ export default function PlansListScreen() {
     fetchPlans();
   };
 
+  const handleDelete = (plan: Plan) => {
+    Alert.alert(
+      'Delete Plan',
+      `Delete your ${bodyAreaLabel(plan.body_area)} recovery plan? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const session = await getSession();
+              const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+              const response = await fetch(`${apiUrl}/plans/${plan.id}`, {
+                method: 'DELETE',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+                },
+              });
+              if (!response.ok) throw new Error('Failed to delete plan');
+              setPlans((prev) => prev.filter((p) => p.id !== plan.id));
+            } catch {
+              Alert.alert('Error', 'Could not delete the plan. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#2563eb" />
+        <ActivityIndicator size="large" color={Colors.primary} />
         <Text style={styles.loadingText}>Loading your plans...</Text>
       </View>
     );
@@ -84,21 +115,27 @@ export default function PlansListScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.heading}>My Plans</Text>
+        <Text style={styles.heading}>My Recovery Plans</Text>
+        <Text style={styles.subheading}>
+          {plans.length === 0 ? 'No plans yet' : `${plans.length} plan${plans.length === 1 ? '' : 's'}`}
+        </Text>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2563eb" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
+        showsVerticalScrollIndicator={false}
       >
         {error && (
           <View style={styles.errorCard}>
+            <Text style={styles.errorIcon}>⚠️</Text>
             <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
@@ -108,44 +145,68 @@ export default function PlansListScreen() {
             <Text style={styles.emptyEmoji}>📋</Text>
             <Text style={styles.emptyTitle}>No plans yet</Text>
             <Text style={styles.emptySubtitle}>
-              Complete an intake assessment to generate your first recovery plan.
+              Complete an intake assessment to get your first personalized recovery plan.
             </Text>
             <TouchableOpacity
               style={styles.startButton}
               onPress={() => router.push('/intake/body-area')}
+              activeOpacity={0.85}
             >
-              <Text style={styles.startButtonText}>Get Started</Text>
+              <Text style={styles.startButtonText}>Start First Assessment</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {plans.map((plan) => (
-          <TouchableOpacity
-            key={plan.id}
-            style={styles.planCard}
-            onPress={() => router.push(`/plans/${plan.id}`)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.planCardTop}>
-              <View style={styles.planBadge}>
-                <Text style={styles.planBadgeText}>Phase {plan.phase}</Text>
-              </View>
-              <View
-                style={[
-                  styles.statusBadge,
-                  plan.status === 'active' ? styles.statusActive : styles.statusInactive,
-                ]}
+        {plans.map((plan) => {
+          const phaseColor = PHASE_COLORS[plan.phase] || Colors.primary;
+          return (
+            <View key={plan.id} style={styles.planCard}>
+              {/* Left accent bar */}
+              <View style={[styles.planAccentBar, { backgroundColor: phaseColor }]} />
+
+              <TouchableOpacity
+                style={styles.planCardContent}
+                onPress={() => router.push(`/plans/${plan.id}`)}
+                activeOpacity={0.8}
               >
-                <Text style={styles.statusText}>{plan.status}</Text>
-              </View>
+                <View style={styles.planCardTop}>
+                  <View style={[styles.phaseBadge, { backgroundColor: phaseColor + '20' }]}>
+                    <Text style={[styles.phaseBadgeText, { color: phaseColor }]}>
+                      Phase {plan.phase}
+                    </Text>
+                  </View>
+                  <View style={styles.planCardTopRight}>
+                    <View style={[
+                      styles.statusBadge,
+                      plan.status === 'active' ? styles.statusActive : styles.statusInactive,
+                    ]}>
+                      <Text style={[
+                        styles.statusText,
+                        { color: plan.status === 'active' ? Colors.success : Colors.textMuted },
+                      ]}>
+                        {plan.status === 'active' ? '● Active' : '○ Inactive'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={() => handleDelete(plan)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.deleteBtnText}>🗑️</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <Text style={styles.planBodyArea}>{bodyAreaLabel(plan.body_area)}</Text>
+                <Text style={styles.planDate}>Started {formatDate(plan.created_at)}</Text>
+
+                <View style={styles.planArrowRow}>
+                  <Text style={[styles.planArrow, { color: phaseColor }]}>View details →</Text>
+                </View>
+              </TouchableOpacity>
             </View>
-
-            <Text style={styles.planBodyArea}>{bodyAreaLabel(plan.body_area)}</Text>
-            <Text style={styles.planDate}>Started {formatDate(plan.created_at)}</Text>
-
-            <Text style={styles.planArrow}>View details →</Text>
-          </TouchableOpacity>
-        ))}
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -154,149 +215,174 @@ export default function PlansListScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: Colors.background,
   },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    backgroundColor: '#f3f4f6',
+    gap: Spacing.md,
+    backgroundColor: Colors.background,
   },
   loadingText: {
     fontSize: 15,
-    color: '#6b7280',
+    color: Colors.textSecondary,
   },
   header: {
-    backgroundColor: '#ffffff',
-    paddingTop: 56,
-    paddingBottom: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    backgroundColor: Colors.primary,
+    paddingTop: 60,
+    paddingBottom: 24,
+    paddingHorizontal: Spacing.xxl,
   },
   backBtn: {
-    marginBottom: 8,
+    marginBottom: 12,
   },
   backBtnText: {
-    color: '#2563eb',
+    color: 'rgba(255,255,255,0.8)',
     fontSize: 15,
     fontWeight: '500',
   },
   heading: {
     fontSize: 26,
-    fontWeight: '700',
-    color: '#111827',
+    fontWeight: '800',
+    color: Colors.textInverse,
+    marginBottom: 4,
+  },
+  subheading: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.7)',
   },
   content: {
-    padding: 20,
-    paddingBottom: 40,
+    padding: Spacing.xxl,
+    paddingBottom: 48,
   },
   errorCard: {
-    backgroundColor: '#fef2f2',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    backgroundColor: Colors.dangerLight,
+    borderRadius: Radius.md,
+    padding: Spacing.xl,
+    marginBottom: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
     borderLeftWidth: 4,
-    borderLeftColor: '#ef4444',
+    borderLeftColor: Colors.danger,
+  },
+  errorIcon: {
+    fontSize: 20,
   },
   errorText: {
-    color: '#991b1b',
+    color: Colors.danger,
     fontSize: 14,
+    flex: 1,
+    lineHeight: 21,
   },
   emptyCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 32,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: 40,
     alignItems: 'center',
-    marginTop: 40,
+    marginTop: 24,
   },
   emptyEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
+    fontSize: 52,
+    marginBottom: Spacing.lg,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 8,
+    fontSize: 22,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginBottom: 10,
   },
   emptySubtitle: {
     fontSize: 15,
-    color: '#6b7280',
+    color: Colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
+    lineHeight: 23,
+    marginBottom: 28,
   },
   startButton: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 10,
+    backgroundColor: Colors.primary,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: Radius.md,
   },
   startButtonText: {
-    color: '#ffffff',
+    color: Colors.textInverse,
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   planCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    marginBottom: Spacing.lg,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  planAccentBar: {
+    width: 5,
+  },
+  planCardContent: {
+    flex: 1,
+    padding: Spacing.xl,
   },
   planCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    alignItems: 'center',
+    marginBottom: Spacing.md,
   },
-  planBadge: {
-    backgroundColor: '#eff6ff',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+  planCardTopRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
   },
-  planBadgeText: {
-    color: '#2563eb',
+  deleteBtn: {
+    padding: 4,
+  },
+  deleteBtnText: {
+    fontSize: 16,
+  },
+  phaseBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: Radius.full,
+  },
+  phaseBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: Radius.full,
   },
   statusActive: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: Colors.successLight,
   },
   statusInactive: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: Colors.inputBg,
   },
   statusText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
-    textTransform: 'capitalize',
   },
   planBodyArea: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginBottom: 5,
   },
   planDate: {
     fontSize: 13,
-    color: '#6b7280',
-    marginBottom: 12,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+  },
+  planArrowRow: {
+    flexDirection: 'row',
   },
   planArrow: {
     fontSize: 13,
-    color: '#2563eb',
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });

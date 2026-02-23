@@ -27,6 +27,16 @@ function HomeScreen() {
               <Text style={styles.buttonText}>Get Started</Text>
             </TouchableOpacity>
           </Link>
+          <Link href="/dashboard/body-map" asChild>
+            <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.7}>
+              <Text style={styles.secondaryButtonText}>Body Map</Text>
+            </TouchableOpacity>
+          </Link>
+          <Link href="/dashboard/history" asChild>
+            <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.7}>
+              <Text style={styles.secondaryButtonText}>Pain History</Text>
+            </TouchableOpacity>
+          </Link>
           <TouchableOpacity
             style={styles.signOutButton}
             onPress={handleSignOut}
@@ -101,6 +111,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  secondaryButton: {
+    marginTop: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 40,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+    backgroundColor: '#ffffff',
+  },
+  secondaryButtonText: {
+    color: '#2563eb',
+    fontSize: 16,
+    fontWeight: '600',
   },
   signOutButton: {
     marginTop: 16,

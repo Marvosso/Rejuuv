@@ -1,11 +1,14 @@
+import { useRef, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  Animated,
 } from 'react-native';
-import { useRouter, useSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
 
 interface CheckInResults {
   adjustment_summary: string;
@@ -16,7 +19,7 @@ interface CheckInResults {
 
 export default function CheckInResultsScreen() {
   const router = useRouter();
-  const params = useSearchParams();
+  const params = useLocalSearchParams();
 
   const rawResults = params.results as string | undefined;
   let results: CheckInResults = {
@@ -33,51 +36,109 @@ export default function CheckInResultsScreen() {
     }
   }
 
+  // Staggered entrance animations
+  const headerAnim = useRef(new Animated.Value(0)).current;
+  const card1Anim = useRef(new Animated.Value(0)).current;
+  const card2Anim = useRef(new Animated.Value(0)).current;
+  const card3Anim = useRef(new Animated.Value(0)).current;
+  const card4Anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const anims = [headerAnim, card1Anim, card2Anim, card3Anim, card4Anim];
+    Animated.stagger(
+      120,
+      anims.map((anim) =>
+        Animated.timing(anim, { toValue: 1, duration: 350, useNativeDriver: true })
+      )
+    ).start();
+  }, []);
+
+  const makeSlide = (anim: Animated.Value) => ({
+    opacity: anim,
+    transform: [
+      { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
+    ],
+  });
+
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.heading}>Check-In Complete</Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Success Header */}
+        <Animated.View style={[styles.successHeader, makeSlide(headerAnim)]}>
+          <View style={styles.successIcon}>
+            <Text style={styles.successIconEmoji}>🎉</Text>
+          </View>
+          <Text style={styles.heading}>Check-In Complete!</Text>
+          <Text style={styles.subheading}>
+            Great work staying on track with your recovery. Here's your personalized feedback.
+          </Text>
+        </Animated.View>
 
-        {/* Summary card — blue border */}
-        <View style={[styles.card, styles.summaryCard]}>
-          <Text style={styles.cardTitle}>Summary</Text>
-          <Text style={styles.cardBody}>{results.adjustment_summary}</Text>
-        </View>
+        {/* Summary card — teal border */}
+        <Animated.View style={makeSlide(card1Anim)}>
+          <View style={[styles.card, styles.summaryCard]}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardIcon}>🔍</Text>
+              <Text style={styles.cardTitle}>Summary</Text>
+            </View>
+            <Text style={styles.cardBody}>{results.adjustment_summary}</Text>
+          </View>
+        </Animated.View>
 
         {/* Recommendations card — green border */}
-        <View style={[styles.card, styles.recommendationsCard]}>
-          <Text style={styles.cardTitle}>Recommendations</Text>
-          {results.updated_recommendations.map((rec, i) => (
-            <View key={i} style={styles.recRow}>
-              <View style={styles.recBadge}>
-                <Text style={styles.recBadgeText}>{i + 1}</Text>
+        {results.updated_recommendations.length > 0 && (
+          <Animated.View style={makeSlide(card2Anim)}>
+            <View style={[styles.card, styles.recommendationsCard]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>✅</Text>
+                <Text style={styles.cardTitle}>Recommendations</Text>
               </View>
-              <Text style={styles.recText}>{rec}</Text>
+              <View style={styles.recList}>
+                {results.updated_recommendations.map((rec, i) => (
+                  <View key={i} style={styles.recRow}>
+                    <View style={styles.recBadge}>
+                      <Text style={styles.recBadgeText}>{i + 1}</Text>
+                    </View>
+                    <Text style={styles.recText}>{rec}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
-          ))}
-        </View>
+          </Animated.View>
+        )}
 
-        {/* Next steps card — purple border */}
-        <View style={[styles.card, styles.nextCard]}>
-          <Text style={styles.cardTitle}>Next Steps</Text>
-          <Text style={styles.cardBody}>{results.next_check_in}</Text>
-        </View>
-
-        {/* Safety card — yellow border, only if safety_reminder exists */}
-        {!!results.safety_reminder && (
-          <View style={[styles.card, styles.safetyCard]}>
-            <Text style={styles.cardTitle}>Safety Reminder</Text>
-            <Text style={styles.cardBody}>{results.safety_reminder}</Text>
+        {/* Next steps card — orange/secondary border */}
+        <Animated.View style={makeSlide(card3Anim)}>
+          <View style={[styles.card, styles.nextCard]}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardIcon}>📅</Text>
+              <Text style={styles.cardTitle}>Next Steps</Text>
+            </View>
+            <Text style={styles.cardBody}>{results.next_check_in}</Text>
           </View>
+        </Animated.View>
+
+        {/* Safety card — amber border, only if present */}
+        {!!results.safety_reminder && (
+          <Animated.View style={makeSlide(card4Anim)}>
+            <View style={[styles.card, styles.safetyCard]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>⚠️</Text>
+                <Text style={styles.cardTitle}>Safety Reminder</Text>
+              </View>
+              <Text style={styles.cardBody}>{results.safety_reminder}</Text>
+            </View>
+          </Animated.View>
         )}
       </ScrollView>
 
       <View style={styles.footer}>
         <TouchableOpacity
-          style={styles.backButton}
+          style={styles.homeButton}
           onPress={() => router.push('/')}
+          activeOpacity={0.85}
         >
-          <Text style={styles.backButtonText}>Back to Plan</Text>
+          <Text style={styles.homeButtonText}>🏠 Back to Home</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -87,100 +148,134 @@ export default function CheckInResultsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: Colors.background,
   },
   content: {
-    padding: 20,
-    paddingBottom: 120,
+    padding: Spacing.xxl,
+    paddingBottom: 130,
+  },
+  successHeader: {
+    alignItems: 'center',
+    marginBottom: Spacing.xxl,
+    paddingTop: Spacing.lg,
+  },
+  successIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.successLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
+  },
+  successIconEmoji: {
+    fontSize: 40,
   },
   heading: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 20,
+    fontSize: 28,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  subheading: {
+    fontSize: 15,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    paddingHorizontal: Spacing.md,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xxl,
+    marginBottom: Spacing.lg,
     borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
   },
   summaryCard: {
-    borderLeftColor: '#2563eb',
+    borderLeftColor: Colors.primary,
   },
   recommendationsCard: {
-    borderLeftColor: '#16a34a',
+    borderLeftColor: Colors.success,
   },
   nextCard: {
-    borderLeftColor: '#9333ea',
+    borderLeftColor: Colors.secondary,
   },
   safetyCard: {
-    borderLeftColor: '#ca8a04',
+    borderLeftColor: Colors.warning,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  cardIcon: {
+    fontSize: 22,
   },
   cardTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 10,
+    color: Colors.textPrimary,
   },
   cardBody: {
-    fontSize: 15,
-    color: '#374151',
-    lineHeight: 22,
+    fontSize: 16,
+    color: Colors.textPrimary,
+    lineHeight: 26,
+  },
+  recList: {
+    gap: Spacing.md,
   },
   recRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 10,
+    gap: Spacing.md,
+    backgroundColor: Colors.successLight,
+    borderRadius: Radius.md,
+    padding: Spacing.lg,
   },
   recBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#16a34a',
+    width: 28,
+    height: 28,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.success,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
-    marginTop: 1,
   },
   recBadgeText: {
-    color: '#ffffff',
-    fontSize: 12,
+    color: Colors.textInverse,
+    fontSize: 13,
     fontWeight: '700',
   },
   recText: {
     flex: 1,
     fontSize: 15,
-    color: '#374151',
-    lineHeight: 22,
+    color: Colors.textPrimary,
+    lineHeight: 23,
   },
   footer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 20,
-    paddingBottom: 36,
-    backgroundColor: '#ffffff',
+    padding: Spacing.xxl,
+    paddingBottom: 40,
+    backgroundColor: Colors.surface,
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+    borderTopColor: Colors.border,
   },
-  backButton: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 16,
-    borderRadius: 12,
+  homeButton: {
+    backgroundColor: Colors.primary,
+    paddingVertical: 18,
+    borderRadius: Radius.md,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  backButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
+  homeButtonText: {
+    color: Colors.textInverse,
+    fontSize: 17,
     fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

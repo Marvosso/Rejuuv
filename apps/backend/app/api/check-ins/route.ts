@@ -23,10 +23,10 @@ export async function POST(request: Request) {
     } = await request.json();
 
     // Validate required fields
-    if (!recovery_plan_id || !pain_change || !pain_level || !difficulty || !current_plan) {
+    if (!pain_change || !pain_level || !difficulty || !current_plan) {
       return NextResponse.json(
         {
-          error: 'Missing required fields: recovery_plan_id, pain_change, pain_level, difficulty, and current_plan are required',
+          error: 'Missing required fields: pain_change, pain_level, difficulty, and current_plan are required',
         },
         { status: 400 }
       );

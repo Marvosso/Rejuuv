@@ -2,13 +2,21 @@ import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { RecoveryPlan, RecoveryPhase } from '../../lib/types';
+import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
+
+const PHASE_CONFIGS = [
+  { key: 1, label: 'Phase 1', range: 'Days 1–7', color: Colors.success, icon: '🌱' },
+  { key: 2, label: 'Phase 2', range: 'Days 8–21', color: Colors.secondary, icon: '🔥' },
+  { key: 3, label: 'Phase 3', range: 'Week 4+', color: Colors.primary, icon: '🏆' },
+];
 
 export default function RecoveryPlanScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [activePhase, setActivePhase] = useState<number>(1);
+  const [expandedExercise, setExpandedExercise] = useState<number | null>(null);
+  const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
 
-  // Parse plan data from search params
   const planParam = params.plan;
   let plan: RecoveryPlan = {
     focus_areas: [],
@@ -23,7 +31,7 @@ export default function RecoveryPlanScreen() {
 
   if (typeof planParam === 'string') {
     try {
-      plan = JSON.parse(decodeURIComponent(planParam));
+      plan = JSON.parse(planParam);
     } catch (error) {
       console.error('Error parsing recovery plan:', error);
     }
@@ -35,18 +43,23 @@ export default function RecoveryPlanScreen() {
 
   const getActivePhaseData = () => {
     switch (activePhase) {
-      case 1:
-        return { data: phase1, title: 'Phase 1', timeRange: 'Days 1-7' };
-      case 2:
-        return { data: phase2, title: 'Phase 2', timeRange: 'Days 8-21' };
-      case 3:
-        return { data: phase3, title: 'Phase 3', timeRange: 'Week 4+' };
-      default:
-        return { data: phase1, title: 'Phase 1', timeRange: 'Days 1-7' };
+      case 1: return { data: phase1, config: PHASE_CONFIGS[0] };
+      case 2: return { data: phase2, config: PHASE_CONFIGS[1] };
+      case 3: return { data: phase3, config: PHASE_CONFIGS[2] };
+      default: return { data: phase1, config: PHASE_CONFIGS[0] };
     }
   };
 
-  const activePhaseData = getActivePhaseData();
+  const { data: phaseData, config: phaseConfig } = getActivePhaseData();
+
+  const toggleExercise = (exerciseKey: string) => {
+    setCompletedExercises(prev => {
+      const next = new Set(prev);
+      if (next.has(exerciseKey)) next.delete(exerciseKey);
+      else next.add(exerciseKey);
+      return next;
+    });
+  };
 
   const handleStartCheckIn = () => {
     router.push(
@@ -59,359 +72,473 @@ export default function RecoveryPlanScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerEmoji}>📋</Text>
-        <Text style={styles.headerText}>Your Recovery Plan</Text>
-      </View>
-
-      {/* Focus Areas */}
-      <View style={styles.focusAreasCard}>
-        <Text style={styles.sectionTitle}>Focus Areas</Text>
-        <View style={styles.chipsContainer}>
-          {plan.focus_areas.map((area, index) => (
-            <View key={index} style={styles.chip}>
-              <Text style={styles.chipText}>{area}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-
-      {/* Phase Tabs */}
-      <View style={styles.tabsContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activePhase === 1 && styles.tabActive]}
-          onPress={() => setActivePhase(1)}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.tabText, activePhase === 1 && styles.tabTextActive]}>Phase 1</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activePhase === 2 && styles.tabActive]}
-          onPress={() => setActivePhase(2)}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.tabText, activePhase === 2 && styles.tabTextActive]}>Phase 2</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activePhase === 3 && styles.tabActive]}
-          onPress={() => setActivePhase(3)}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.tabText, activePhase === 3 && styles.tabTextActive]}>Phase 3</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Active Phase Content */}
-      <View style={styles.phaseCard}>
-        <Text style={styles.phaseTitle}>{activePhaseData.title}</Text>
-        <Text style={styles.phaseTimeRange}>{activePhaseData.timeRange}</Text>
-
-        {/* Goals */}
-        {activePhaseData.data.goal && (
-          <>
-            <Text style={styles.subHeaderBlue}>Goals</Text>
-            <View style={styles.listItem}>
-              <View style={styles.numberBadgeBlue}>
-                <Text style={styles.numberText}>1</Text>
-              </View>
-              <Text style={styles.listItemText}>{activePhaseData.data.goal}</Text>
-            </View>
-          </>
-        )}
-
-        {/* Exercises */}
-        {activePhaseData.data.activities && activePhaseData.data.activities.length > 0 && (
-          <>
-            <Text style={styles.subHeaderGreen}>Exercises</Text>
-            {activePhaseData.data.activities.map((exercise, index) => (
-              <View key={index} style={styles.listItem}>
-                <View style={styles.numberBadgeGreen}>
-                  <Text style={styles.numberText}>{index + 1}</Text>
-                </View>
-                <Text style={styles.listItemText}>{exercise}</Text>
-              </View>
-            ))}
-          </>
-        )}
-
-        {/* Tips (using avoid as tips) */}
-        {activePhaseData.data.avoid && activePhaseData.data.avoid.length > 0 && (
-          <>
-            <Text style={styles.subHeaderPurple}>Tips</Text>
-            {activePhaseData.data.avoid.map((tip, index) => (
-              <View key={index} style={styles.listItem}>
-                <View style={styles.numberBadgePurple}>
-                  <Text style={styles.numberText}>{index + 1}</Text>
-                </View>
-                <Text style={styles.listItemText}>{tip}</Text>
-              </View>
-            ))}
-          </>
-        )}
-      </View>
-
-      {/* Daily Habits */}
-      {plan.daily_habits && plan.daily_habits.length > 0 && (
-        <View style={[styles.card, styles.dailyHabitsCard]}>
-          <Text style={styles.cardTitle}>
-            🌱 Daily Habits
-          </Text>
-          {plan.daily_habits.map((habit, index) => (
-            <View key={index} style={styles.bulletItem}>
-              <Text style={styles.bullet}>•</Text>
-              <Text style={styles.bulletText}>{habit}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {/* Red Flags */}
-      {plan.red_flags && plan.red_flags.length > 0 && (
-        <View style={[styles.card, styles.redFlagsCard]}>
-          <Text style={styles.cardTitle}>
-            ⚠️ Watch For These
-          </Text>
-          {plan.red_flags.map((flag, index) => (
-            <View key={index} style={styles.bulletItem}>
-              <Text style={styles.bullet}>•</Text>
-              <Text style={styles.bulletText}>{flag}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {/* Start Check-In Button */}
-      <TouchableOpacity
-        style={styles.startCheckInButton}
-        onPress={handleStartCheckIn}
-        activeOpacity={0.7}
+    <View style={styles.container}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.startCheckInButtonText}>Start Check-In</Text>
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.headerBadge}>
+            <Text style={styles.headerBadgeText}>📋 Your Recovery Plan</Text>
+          </View>
+          <Text style={styles.headerTitle}>Personalized for You</Text>
+          <Text style={styles.headerSubtitle}>
+            Follow this 3-phase program to rebuild strength and reduce pain.
+          </Text>
+        </View>
+
+        {/* Focus Areas */}
+        {plan.focus_areas?.length > 0 && (
+          <View style={styles.focusCard}>
+            <Text style={styles.focusCardTitle}>🎯 Focus Areas</Text>
+            <View style={styles.chipsRow}>
+              {plan.focus_areas.map((area, index) => (
+                <View key={index} style={styles.focusChip}>
+                  <Text style={styles.focusChipText}>{area}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Phase Tabs — segmented control */}
+        <View style={styles.phaseTabsContainer}>
+          {PHASE_CONFIGS.map((phase) => (
+            <TouchableOpacity
+              key={phase.key}
+              style={[
+                styles.phaseTab,
+                activePhase === phase.key && [styles.phaseTabActive, { backgroundColor: phase.color }],
+              ]}
+              onPress={() => {
+                setActivePhase(phase.key);
+                setExpandedExercise(null);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[
+                styles.phaseTabText,
+                activePhase === phase.key && styles.phaseTabTextActive,
+              ]}>
+                {phase.icon} {phase.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Phase Content */}
+        <View style={[styles.phaseCard, { borderTopColor: phaseConfig.color }]}>
+          <View style={styles.phaseCardHeader}>
+            <Text style={[styles.phaseTitle, { color: phaseConfig.color }]}>
+              {phaseConfig.icon} {phaseConfig.label}
+            </Text>
+            <View style={[styles.phaseRangeBadge, { backgroundColor: phaseConfig.color + '20' }]}>
+              <Text style={[styles.phaseRangeText, { color: phaseConfig.color }]}>
+                {phaseConfig.range}
+              </Text>
+            </View>
+          </View>
+
+          {/* Goals */}
+          {phaseData.goal ? (
+            <View style={styles.goalSection}>
+              <Text style={styles.subSectionTitle}>🎯 Goal</Text>
+              <View style={[styles.goalCard, { borderLeftColor: phaseConfig.color }]}>
+                <Text style={styles.goalText}>{phaseData.goal}</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Exercises — expandable cards with checkboxes */}
+          {phaseData.activities?.length > 0 && (
+            <View style={styles.exercisesSection}>
+              <Text style={styles.subSectionTitle}>💪 Exercises</Text>
+              {phaseData.activities.map((exercise, index) => {
+                const exerciseKey = `${activePhase}-${index}`;
+                const isCompleted = completedExercises.has(exerciseKey);
+                return (
+                  <View key={index} style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}>
+                    <TouchableOpacity
+                      style={styles.exerciseHeader}
+                      onPress={() => setExpandedExercise(expandedExercise === index ? null : index)}
+                      activeOpacity={0.8}
+                    >
+                      <TouchableOpacity
+                        style={[styles.checkbox, isCompleted && { backgroundColor: phaseConfig.color, borderColor: phaseConfig.color }]}
+                        onPress={() => toggleExercise(exerciseKey)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        {isCompleted && <Text style={styles.checkboxTick}>✓</Text>}
+                      </TouchableOpacity>
+                      <Text style={[
+                        styles.exerciseName,
+                        isCompleted && styles.exerciseNameCompleted,
+                      ]}>
+                        {exercise}
+                      </Text>
+                      <Text style={styles.exerciseExpandIcon}>
+                        {expandedExercise === index ? '▲' : '▼'}
+                      </Text>
+                    </TouchableOpacity>
+                    {expandedExercise === index && (
+                      <View style={styles.exerciseDetails}>
+                        <Text style={styles.exerciseDetailsText}>
+                          Tap the checkbox when you've completed this exercise. Consistency is key to recovery — aim to complete each exercise every day.
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Tips */}
+          {phaseData.avoid?.length > 0 && (
+            <View style={styles.tipsSection}>
+              <Text style={styles.subSectionTitle}>💡 Tips & Precautions</Text>
+              {phaseData.avoid.map((tip, index) => (
+                <View key={index} style={styles.tipItem}>
+                  <View style={[styles.tipDot, { backgroundColor: phaseConfig.color }]} />
+                  <Text style={styles.tipText}>{tip}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Daily Habits */}
+        {plan.daily_habits?.length > 0 && (
+          <View style={[styles.infoCard, styles.habitsCard]}>
+            <Text style={styles.infoCardTitle}>🌱 Daily Habits</Text>
+            {plan.daily_habits.map((habit, index) => (
+              <View key={index} style={styles.bulletItem}>
+                <View style={[styles.bulletDot, { backgroundColor: Colors.success }]} />
+                <Text style={styles.bulletText}>{habit}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Red Flags */}
+        {plan.red_flags?.length > 0 && (
+          <View style={[styles.infoCard, styles.redFlagsCard]}>
+            <Text style={styles.infoCardTitle}>⚠️ Watch For These</Text>
+            <Text style={styles.infoCardSubtitle}>Seek medical attention if you experience:</Text>
+            {plan.red_flags.map((flag, index) => (
+              <View key={index} style={styles.bulletItem}>
+                <View style={[styles.bulletDot, { backgroundColor: Colors.danger }]} />
+                <Text style={styles.bulletText}>{flag}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Spacer for FAB */}
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={handleStartCheckIn}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.fabIcon}>✏️</Text>
+        <Text style={styles.fabText}>Start Check-In</Text>
       </TouchableOpacity>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0f9ff',
+    backgroundColor: Colors.background,
+  },
+  scrollView: {
+    flex: 1,
   },
   scrollContent: {
-    padding: 20,
+    padding: Spacing.xxl,
     paddingBottom: 40,
   },
   header: {
-    alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: Spacing.xxl,
   },
-  headerEmoji: {
-    fontSize: 48,
+  headerBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primaryLight,
+    borderRadius: Radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    marginBottom: Spacing.md,
+  },
+  headerBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: Colors.textPrimary,
     marginBottom: 8,
   },
-  headerText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1F2937',
+  headerSubtitle: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    lineHeight: 24,
   },
-  focusAreasCard: {
-    backgroundColor: '#DBEAFE',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
+  focusCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xxl,
+    marginBottom: Spacing.xl,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 12,
+  focusCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
   },
-  chipsContainer: {
+  chipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: Spacing.sm,
   },
-  chip: {
-    backgroundColor: '#2563eb',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+  focusChip: {
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
   },
-  chipText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
+  focusChipText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
   },
-  tabsContainer: {
+  phaseTabsContainer: {
     flexDirection: 'row',
-    marginBottom: 20,
-    gap: 8,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    padding: 4,
+    marginBottom: Spacing.xl,
   },
-  tab: {
+  phaseTab: {
     flex: 1,
     paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#2563eb',
-    backgroundColor: '#FFFFFF',
+    borderRadius: Radius.sm,
     alignItems: 'center',
   },
-  tabActive: {
-    backgroundColor: '#2563eb',
+  phaseTabActive: {
+    // color set dynamically
   },
-  tabText: {
-    fontSize: 16,
+  phaseTabText: {
+    fontSize: 12,
     fontWeight: '600',
-    color: '#2563eb',
+    color: Colors.textSecondary,
   },
-  tabTextActive: {
-    color: '#FFFFFF',
+  phaseTabTextActive: {
+    color: Colors.textInverse,
   },
   phaseCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xxl,
+    marginBottom: Spacing.xl,
+    borderTopWidth: 4,
+  },
+  phaseCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.xl,
   },
   phaseTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 4,
+    fontSize: 20,
+    fontWeight: '800',
   },
-  phaseTimeRange: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 20,
+  phaseRangeBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: Radius.full,
   },
-  subHeaderBlue: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#2563eb',
-    marginTop: 16,
-    marginBottom: 12,
-  },
-  subHeaderGreen: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#10B981',
-    marginTop: 16,
-    marginBottom: 12,
-  },
-  subHeaderPurple: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#9333EA',
-    marginTop: 16,
-    marginBottom: 12,
-  },
-  listItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  numberBadgeBlue: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#2563eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 2,
-  },
-  numberBadgeGreen: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#10B981',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 2,
-  },
-  numberBadgePurple: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#9333EA',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 2,
-  },
-  numberText: {
-    color: '#FFFFFF',
+  phaseRangeText: {
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
-  listItemText: {
+  goalSection: {
+    marginBottom: Spacing.xl,
+  },
+  subSectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+  },
+  goalCard: {
+    backgroundColor: Colors.background,
+    borderRadius: Radius.md,
+    padding: Spacing.lg,
+    borderLeftWidth: 3,
+  },
+  goalText: {
+    fontSize: 15,
+    color: Colors.textPrimary,
+    lineHeight: 23,
+  },
+  exercisesSection: {
+    marginBottom: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  exerciseCard: {
+    backgroundColor: Colors.background,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  exerciseCardCompleted: {
+    opacity: 0.7,
+    borderColor: Colors.success + '50',
+  },
+  exerciseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    minHeight: 56,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  checkboxTick: {
+    color: Colors.textInverse,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  exerciseName: {
     flex: 1,
-    fontSize: 16,
-    color: '#1F2937',
+    fontSize: 15,
+    color: Colors.textPrimary,
+    fontWeight: '500',
     lineHeight: 22,
   },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+  exerciseNameCompleted: {
+    textDecorationLine: 'line-through',
+    color: Colors.textMuted,
   },
-  dailyHabitsCard: {
+  exerciseExpandIcon: {
+    fontSize: 10,
+    color: Colors.textMuted,
+  },
+  exerciseDetails: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    padding: Spacing.lg,
+    backgroundColor: Colors.surface,
+  },
+  exerciseDetailsText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    lineHeight: 22,
+  },
+  tipsSection: {
+    gap: Spacing.sm,
+  },
+  tipItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+    paddingVertical: 4,
+  },
+  tipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 7,
+    flexShrink: 0,
+  },
+  tipText: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.textPrimary,
+    lineHeight: 23,
+  },
+  infoCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xxl,
+    marginBottom: Spacing.xl,
     borderLeftWidth: 4,
-    borderLeftColor: '#10B981',
+  },
+  habitsCard: {
+    borderLeftColor: Colors.success,
   },
   redFlagsCard: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#EF4444',
+    borderLeftColor: Colors.danger,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 12,
+  infoCardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 8,
+  },
+  infoCardSubtitle: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
   },
   bulletItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    gap: Spacing.md,
+    marginBottom: 10,
   },
-  bullet: {
-    fontSize: 18,
-    color: '#6B7280',
-    marginRight: 8,
-    marginTop: 2,
+  bulletDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 7,
+    flexShrink: 0,
   },
   bulletText: {
     flex: 1,
-    fontSize: 16,
-    color: '#1F2937',
-    lineHeight: 22,
+    fontSize: 15,
+    color: Colors.textPrimary,
+    lineHeight: 23,
   },
-  startCheckInButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 12,
-    padding: 16,
+  fab: {
+    position: 'absolute',
+    bottom: 32,
+    right: 24,
+    backgroundColor: Colors.secondary,
+    borderRadius: Radius.full,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
+    gap: Spacing.sm,
   },
-  startCheckInButtonText: {
-    color: '#FFFFFF',
+  fabIcon: {
     fontSize: 18,
-    fontWeight: 'bold',
+  },
+  fabText: {
+    color: Colors.textInverse,
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });

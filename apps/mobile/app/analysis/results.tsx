@@ -1,7 +1,17 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+  Animated,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { getSession } from '../../lib/auth';
+import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
 
 interface AnalysisData {
   summary: string;
@@ -15,35 +25,47 @@ export default function ResultsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  // Parse analysis data from search params
   const analysisParam = params.analysis as string | undefined;
   const intakeDataParam = params.intakeData as string | undefined;
-  
-  const analysis: AnalysisData = analysisParam
-    ? JSON.parse(decodeURIComponent(analysisParam))
-    : {
-        summary: '',
-        possible_contributors: [],
-        education: '',
-        safety_note: '',
-      };
 
-  const intakeData = intakeDataParam
-    ? JSON.parse(decodeURIComponent(intakeDataParam))
-    : null;
+  const analysis: AnalysisData = analysisParam
+    ? JSON.parse(analysisParam)
+    : { summary: '', possible_contributors: [], education: '', safety_note: '' };
+
+  const intakeData = intakeDataParam ? JSON.parse(intakeDataParam) : null;
+
+  // Staggered animations for cards
+  const headerAnim = useRef(new Animated.Value(0)).current;
+  const card1Anim = useRef(new Animated.Value(0)).current;
+  const card2Anim = useRef(new Animated.Value(0)).current;
+  const card3Anim = useRef(new Animated.Value(0)).current;
+  const card4Anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const anims = [headerAnim, card1Anim, card2Anim, card3Anim, card4Anim];
+    Animated.stagger(
+      150,
+      anims.map((anim) =>
+        Animated.timing(anim, { toValue: 1, duration: 400, useNativeDriver: true })
+      )
+    ).start();
+  }, []);
+
+  const makeSlide = (anim: Animated.Value) => ({
+    opacity: anim,
+    transform: [
+      {
+        translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }),
+      },
+    ],
+  });
 
   const handleGeneratePlan = async () => {
     if (!intakeData) {
-      Alert.alert(
-        'Error',
-        'Unable to generate recovery plan. Please start over.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Error', 'Unable to generate recovery plan. Please start over.', [{ text: 'OK' }]);
       return;
     }
-
     setLoading(true);
-
     try {
       const session = await getSession();
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
@@ -51,113 +73,120 @@ export default function ResultsScreen() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : {}),
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({
-          assessment: analysis,
-          intake_data: intakeData,
-        }),
+        body: JSON.stringify({ assessment: analysis, intake_data: intakeData }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to generate recovery plan');
-      }
+      if (!response.ok) throw new Error('Failed to generate recovery plan');
 
       const recoveryPlan = await response.json();
-
-      // Navigate to recovery plan screen with the plan data
-      const planData = recoveryPlan;
-      router.push('/analysis/plan?' + new URLSearchParams({ plan: JSON.stringify(planData) }).toString());
-    } catch (error) {
-      console.error('Error generating recovery plan:', error);
-      Alert.alert(
-        'Error',
-        'Something went wrong. Please try again.',
-        [{ text: 'OK' }]
+      router.push(
+        '/analysis/plan?' +
+          new URLSearchParams({ plan: JSON.stringify(recoveryPlan) }).toString()
       );
+    } catch (error) {
+      Alert.alert('Error', 'Something went wrong. Please try again.', [{ text: 'OK' }]);
       setLoading(false);
     }
   };
 
-  const handleBackToHome = () => {
-    router.push('/');
-  };
-
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <Text style={styles.headerEmoji}>✅</Text>
-          <Text style={styles.headerText}>Analysis Complete</Text>
-        </View>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <Animated.View style={[styles.header, makeSlide(headerAnim)]}>
+          <View style={styles.successBadge}>
+            <Text style={styles.successBadgeText}>✅ Analysis Complete</Text>
+          </View>
+          <Text style={styles.headerTitle}>Here's What We Found</Text>
+          <Text style={styles.headerSubtitle}>
+            Review your personalized analysis below, then generate your recovery plan.
+          </Text>
+        </Animated.View>
 
         {/* Summary Card */}
-        <View style={[styles.card, styles.summaryCard]}>
-          <Text style={styles.cardTitle}>What We Found</Text>
-          <Text style={styles.cardBody}>{analysis.summary}</Text>
-        </View>
+        <Animated.View style={makeSlide(card1Anim)}>
+          <View style={[styles.card, styles.summaryCard]}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardIcon}>🔍</Text>
+              <Text style={styles.cardTitle}>What We Found</Text>
+            </View>
+            <Text style={styles.cardBody}>{analysis.summary}</Text>
+          </View>
+        </Animated.View>
 
         {/* Contributors Card */}
-        {analysis.possible_contributors && analysis.possible_contributors.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Possible Contributors</Text>
-            <View style={styles.contributorsList}>
-              {analysis.possible_contributors.map((contributor, index) => (
-                <View key={index} style={styles.contributorItem}>
-                  <View style={styles.contributorNumberBadge}>
-                    <Text style={styles.contributorNumber}>{index + 1}</Text>
+        {analysis.possible_contributors?.length > 0 && (
+          <Animated.View style={makeSlide(card2Anim)}>
+            <View style={[styles.card, styles.contributorsCard]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>💡</Text>
+                <Text style={styles.cardTitle}>Possible Contributors</Text>
+              </View>
+              <View style={styles.contributorsList}>
+                {analysis.possible_contributors.map((contributor, index) => (
+                  <View key={index} style={styles.contributorItem}>
+                    <View style={styles.contributorBadge}>
+                      <Text style={styles.contributorNumber}>{index + 1}</Text>
+                    </View>
+                    <Text style={styles.contributorText}>{contributor}</Text>
                   </View>
-                  <Text style={styles.contributorText}>{contributor}</Text>
-                </View>
-              ))}
+                ))}
+              </View>
             </View>
-          </View>
+          </Animated.View>
         )}
 
         {/* Education Card */}
-        <View style={[styles.card, styles.educationCard]}>
-          <Text style={styles.cardTitle}>What You Can Do</Text>
-          <Text style={styles.cardBody}>{analysis.education}</Text>
-        </View>
-
-        {/* Safety Note Card */}
-        {analysis.safety_note && (
-          <View style={[styles.card, styles.safetyCard]}>
-            <Text style={styles.cardTitle}>
-              ⚠️ Safety Reminder
-            </Text>
-            <Text style={styles.cardBody}>{analysis.safety_note}</Text>
+        <Animated.View style={makeSlide(card3Anim)}>
+          <View style={[styles.card, styles.educationCard]}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardIcon}>📚</Text>
+              <Text style={styles.cardTitle}>What You Can Do</Text>
+            </View>
+            <Text style={styles.cardBody}>{analysis.education}</Text>
           </View>
-        )}
+        </Animated.View>
+
+        {/* Safety Note */}
+        {analysis.safety_note ? (
+          <Animated.View style={makeSlide(card4Anim)}>
+            <View style={[styles.card, styles.safetyCard]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>⚠️</Text>
+                <Text style={styles.cardTitle}>Safety Reminder</Text>
+              </View>
+              <Text style={styles.cardBody}>{analysis.safety_note}</Text>
+            </View>
+          </Animated.View>
+        ) : null}
       </ScrollView>
 
       {loading && (
         <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#2563eb" />
-          <Text style={styles.loadingText}>Generating your recovery plan...</Text>
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={styles.loadingTitle}>Building your recovery plan...</Text>
+            <Text style={styles.loadingSubtitle}>
+              Personalizing exercises and timeline for you
+            </Text>
+          </View>
         </View>
       )}
 
       <View style={styles.footer}>
         <TouchableOpacity
-          style={[
-            styles.generateButton,
-            loading && styles.generateButtonDisabled,
-          ]}
+          style={[styles.generateButton, loading && styles.generateButtonDisabled]}
           onPress={handleGeneratePlan}
           disabled={loading}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
         >
+          <Text style={styles.generateButtonIcon}>📋</Text>
           <Text style={styles.generateButtonText}>Generate My Recovery Plan</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={handleBackToHome}
-          activeOpacity={0.7}
-        >
+        <TouchableOpacity style={styles.backButton} onPress={() => router.push('/')} activeOpacity={0.7}>
           <Text style={styles.backButtonText}>Back to Home</Text>
         </TouchableOpacity>
       </View>
@@ -168,123 +197,149 @@ export default function ResultsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: Colors.background,
   },
   scrollContent: {
-    padding: 20,
-    paddingBottom: 140,
+    padding: Spacing.xxl,
+    paddingBottom: 160,
   },
   header: {
-    alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: Spacing.xxl,
   },
-  headerEmoji: {
-    fontSize: 48,
-    marginBottom: 8,
+  successBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.successLight,
+    borderRadius: Radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    marginBottom: Spacing.md,
   },
-  headerText: {
+  successBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.success,
+  },
+  headerTitle: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginBottom: 8,
+    lineHeight: 36,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    lineHeight: 24,
   },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xxl,
+    marginBottom: Spacing.lg,
     borderLeftWidth: 4,
   },
   summaryCard: {
-    borderLeftColor: '#2563eb',
+    borderLeftColor: Colors.primary,
+  },
+  contributorsCard: {
+    borderLeftColor: Colors.secondary,
   },
   educationCard: {
-    borderLeftColor: '#9333EA',
+    borderLeftColor: Colors.success,
   },
   safetyCard: {
-    borderLeftColor: '#F59E0B',
+    borderLeftColor: Colors.warning,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  cardIcon: {
+    fontSize: 22,
   },
   cardTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 12,
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
   },
   cardBody: {
     fontSize: 16,
-    color: '#374151',
-    lineHeight: 24,
+    color: Colors.textPrimary,
+    lineHeight: 26,
   },
   contributorsList: {
-    gap: 12,
+    gap: Spacing.md,
   },
   contributorItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 8,
-    padding: 12,
-    gap: 12,
+    backgroundColor: Colors.secondaryLight,
+    borderRadius: Radius.md,
+    padding: Spacing.lg,
+    gap: Spacing.md,
   },
-  contributorNumberBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#2563eb',
+  contributorBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.secondary,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   contributorNumber: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: 'bold',
+    color: Colors.textInverse,
+    fontSize: 13,
+    fontWeight: '700',
   },
   contributorText: {
     flex: 1,
-    fontSize: 16,
-    color: '#374151',
-    lineHeight: 22,
+    fontSize: 15,
+    color: Colors.textPrimary,
+    lineHeight: 23,
   },
   footer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 20,
+    padding: Spacing.xxl,
     paddingBottom: 40,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Colors.surface,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    gap: 12,
+    borderTopColor: Colors.border,
+    gap: Spacing.md,
   },
   generateButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  generateButtonDisabled: {
+    backgroundColor: Colors.textMuted,
+  },
+  generateButtonIcon: {
+    fontSize: 20,
   },
   generateButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+    color: Colors.textInverse,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   backButton: {
-    padding: 12,
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
   },
   backButtonText: {
-    color: '#6B7280',
-    fontSize: 16,
+    color: Colors.textSecondary,
+    fontSize: 15,
     fontWeight: '500',
   },
   loadingOverlay: {
@@ -293,17 +348,27 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: 'rgba(250, 250, 250, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 16,
   },
-  loadingText: {
-    fontSize: 16,
-    color: '#6B7280',
-    fontWeight: '500',
+  loadingCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: 40,
+    alignItems: 'center',
+    gap: Spacing.lg,
+    width: '80%',
   },
-  generateButtonDisabled: {
-    backgroundColor: '#D1D5DB',
+  loadingTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  loadingSubtitle: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
   },
 });
