@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
+/** Avoid static prerender of _global-error (useContext null on Vercel build). */
+export const dynamic = "force-dynamic";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],

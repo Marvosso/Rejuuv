@@ -2,22 +2,13 @@
 
 /**
  * Global error boundary. Must define its own <html> and <body> (replaces root layout).
- * Kept minimal to avoid prerender issues (e.g. useContext null during static export).
+ * Minimal static content only to avoid prerender useContext null (Next.js internal).
  */
-export default function GlobalError({
-  error,
-  reset,
-}: {
-  error: Error & { digest?: string };
-  reset: () => void;
-}) {
+export default function GlobalError() {
   return (
     <html lang="en">
       <body style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem', textAlign: 'center' }}>
         <h2>Something went wrong</h2>
-        <button type="button" onClick={() => reset()} style={{ marginTop: '1rem', padding: '0.5rem 1rem' }}>
-          Try again
-        </button>
       </body>
     </html>
   );
