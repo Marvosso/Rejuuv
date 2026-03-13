@@ -24,9 +24,9 @@
   /* Softer default radii for cards and buttons (xl = 12px, 2xl = 16px) */
   --radius-xl: 0.75rem;   /* 12px */
   --radius-2xl: 1rem;    /* 16px */
-  /* Modern sans stack: Geist, Inter fallback */
-  --font-sans: var(--font-geist-sans), "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono);
+  /* Modern sans stack (no next/font to avoid prerender context issues) */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
