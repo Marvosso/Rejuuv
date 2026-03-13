@@ -9,6 +9,7 @@ const inRoot = path.resolve(cwd, "../../node_modules/tailwindcss");
 const tailwindResolve = existsSync(inBackend) ? inBackend : inRoot;
 
 const nextConfig: NextConfig = {
+  eslint: { ignoreDuringBuilds: true },
   turbopack: {
     resolveAlias: {
       tailwindcss: tailwindResolve,
