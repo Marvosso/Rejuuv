@@ -15,6 +15,8 @@ interface CheckInResults {
   updated_recommendations: string[];
   next_check_in: string;
   safety_reminder?: string;
+  suggested_phase?: number;
+  maintenance_unlocked?: boolean;
 }
 
 export default function CheckInResultsScreen() {
@@ -73,6 +75,33 @@ export default function CheckInResultsScreen() {
             Great work staying on track with your recovery. Here's your personalized feedback.
           </Text>
         </Animated.View>
+
+        {/* Maintenance unlocked celebration */}
+        {results.maintenance_unlocked && (
+          <Animated.View style={makeSlide(card1Anim)}>
+            <View style={[styles.card, styles.maintenanceCard]}>
+              <Text style={styles.phaseCardEmoji}>🏆</Text>
+              <Text style={styles.phaseCardTitle}>You completed your plan!</Text>
+              <Text style={styles.maintenanceBadge}>Maintenance mode unlocked</Text>
+              <Text style={styles.phaseCardSubtitle}>
+                Keep up your daily habits and check in when needed. You can start a new plan for another area anytime.
+              </Text>
+            </View>
+          </Animated.View>
+        )}
+
+        {/* Phase suggestion when pain dropped >30% */}
+        {results.suggested_phase != null && !results.maintenance_unlocked && (
+          <Animated.View style={makeSlide(card1Anim)}>
+            <View style={[styles.card, styles.phaseCard]}>
+              <Text style={styles.phaseCardEmoji}>📈</Text>
+              <Text style={styles.phaseCardTitle}>You might be ready for Phase {results.suggested_phase}</Text>
+              <Text style={styles.phaseCardSubtitle}>
+                Your pain has improved. Consider moving to the next phase of your plan.
+              </Text>
+            </View>
+          </Animated.View>
+        )}
 
         {/* Summary card — teal border */}
         <Animated.View style={makeSlide(card1Anim)}>
@@ -194,6 +223,41 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     borderLeftColor: Colors.primary,
+  },
+  phaseCard: {
+    borderLeftColor: Colors.success,
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+  },
+  phaseCardEmoji: {
+    fontSize: 36,
+    marginBottom: Spacing.sm,
+  },
+  phaseCardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  phaseCardSubtitle: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 21,
+  },
+  maintenanceCard: {
+    borderLeftColor: Colors.secondary,
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+  },
+  maintenanceBadge: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: Spacing.sm,
   },
   recommendationsCard: {
     borderLeftColor: Colors.success,

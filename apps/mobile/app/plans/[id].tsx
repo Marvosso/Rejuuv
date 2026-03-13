@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,15 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  Pressable,
+  Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Video } from 'expo-av';
 import { getSession } from '../../lib/auth';
-import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
+import { getLocalVideoForActivity } from '../../lib/localVideos';
+import { Colors, Spacing, Radius } from '../../lib/theme';
 
 interface CheckInRecord {
   id: string;
@@ -63,6 +68,25 @@ export default function PlanDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{ source: number; title: string } | null>(null);
+  const videoWrapperRef = useRef<View>(null);
+
+  // On web, expo-av Video often doesn't respect container size; force the <video> element to fit
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !playingVideo) return;
+    const id = setTimeout(() => {
+      const wrapper = videoWrapperRef.current as unknown as HTMLElement | null;
+      const video = wrapper?.querySelector?.('video');
+      if (video && video.style) {
+        video.style.position = 'relative';
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'contain';
+        video.style.display = 'block';
+      }
+    }, 100);
+    return () => clearTimeout(id);
+  }, [playingVideo]);
 
   const load = async () => {
     if (!id) return;
@@ -137,7 +161,14 @@ export default function PlanDetailScreen() {
     <View style={styles.container}>
       {/* Teal header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => {
+            const canGoBack = router.canGoBack();
+            fetch('http://127.0.0.1:7889/ingest/a2a93dc1-6ddc-4917-a00c-d8dc1a903f11',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c1e4e7'},body:JSON.stringify({sessionId:'c1e4e7',location:'plans/[id].tsx:backBtn',message:'GO_BACK from plan detail',data:{canGoBack},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
+            router.back();
+          }}
+          style={styles.backBtn}
+        >
           <Text style={styles.backBtnText}>← My Plans</Text>
         </TouchableOpacity>
         <Text style={styles.heading}>{bodyAreaLabel(plan.body_area)}</Text>
@@ -179,15 +210,119 @@ export default function PlanDetailScreen() {
           <View style={[styles.card, styles.exerciseCard]}>
             <Text style={styles.cardTitle}>💪 Phase 1 Exercises (Days 1–7)</Text>
             {planData.recovery_plan.phase_1_days_1_to_7.activities.map(
-              (ex: string, i: number) => (
-                <View key={i} style={styles.exerciseRow}>
-                  <View style={styles.exerciseDot} />
-                  <Text style={styles.exerciseText}>{ex}</Text>
-                </View>
-              )
+              (ex: string, i: number) => {
+                const local = getLocalVideoForActivity(ex);
+                return (
+                  <View key={i} style={styles.exerciseRowWithDemo}>
+                    <View style={styles.exerciseRow}>
+                      <View style={styles.exerciseDot} />
+                      <Text style={styles.exerciseText}>{ex}</Text>
+                    </View>
+                    {local && (
+                      <TouchableOpacity
+                        style={styles.playDemoBtn}
+                        onPress={() => setPlayingVideo({ source: local.source, title: ex })}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.playDemoBtnText}>▶ Play demo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              }
             )}
           </View>
         )}
+
+        {/* Phase 2 exercises */}
+        {planData.recovery_plan?.phase_2_days_8_to_21?.activities?.length > 0 && (
+          <View style={[styles.card, styles.exerciseCardPhase2]}>
+            <Text style={styles.cardTitle}>🔥 Phase 2 Exercises (Days 8–21)</Text>
+            {planData.recovery_plan.phase_2_days_8_to_21.activities.map(
+              (ex: string, i: number) => {
+                const local = getLocalVideoForActivity(ex);
+                return (
+                  <View key={i} style={styles.exerciseRowWithDemo}>
+                    <View style={styles.exerciseRow}>
+                      <View style={styles.exerciseDot} />
+                      <Text style={styles.exerciseText}>{ex}</Text>
+                    </View>
+                    {local && (
+                      <TouchableOpacity
+                        style={styles.playDemoBtn}
+                        onPress={() => setPlayingVideo({ source: local.source, title: ex })}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.playDemoBtnText}>▶ Play demo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              }
+            )}
+          </View>
+        )}
+
+        {/* Phase 3 exercises */}
+        {planData.recovery_plan?.phase_3_week_4_and_beyond?.activities?.length > 0 && (
+          <View style={[styles.card, styles.exerciseCardPhase3]}>
+            <Text style={styles.cardTitle}>🏆 Phase 3 Exercises (Week 4+)</Text>
+            {planData.recovery_plan.phase_3_week_4_and_beyond.activities.map(
+              (ex: string, i: number) => {
+                const local = getLocalVideoForActivity(ex);
+                return (
+                  <View key={i} style={styles.exerciseRowWithDemo}>
+                    <View style={styles.exerciseRow}>
+                      <View style={styles.exerciseDot} />
+                      <Text style={styles.exerciseText}>{ex}</Text>
+                    </View>
+                    {local && (
+                      <TouchableOpacity
+                        style={styles.playDemoBtn}
+                        onPress={() => setPlayingVideo({ source: local.source, title: ex })}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.playDemoBtnText}>▶ Play demo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              }
+            )}
+          </View>
+        )}
+
+        {/* Video modal */}
+        <Modal
+          visible={playingVideo !== null}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setPlayingVideo(null)}
+        >
+          <Pressable style={styles.videoModalOverlay} onPress={() => setPlayingVideo(null)}>
+            <View style={styles.videoModalContent}>
+              {playingVideo && (
+                <>
+                  <Text style={styles.videoModalTitle} numberOfLines={2}>{playingVideo.title}</Text>
+                  <View ref={videoWrapperRef} style={styles.videoPlayerWrapper} collapsable={false}>
+                    <Video
+                      key={playingVideo.title}
+                      source={playingVideo.source}
+                      style={styles.videoPlayer}
+                      useNativeControls
+                      resizeMode="contain"
+                      shouldPlay
+                      isLooping={false}
+                    />
+                  </View>
+                  <TouchableOpacity style={styles.videoModalClose} onPress={() => setPlayingVideo(null)}>
+                    <Text style={styles.videoModalCloseText}>Close</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </Pressable>
+        </Modal>
 
         {/* Check-in history */}
         <View style={styles.historySection}>
@@ -375,6 +510,72 @@ const styles = StyleSheet.create({
   exerciseCard: {
     borderLeftWidth: 4,
     borderLeftColor: Colors.success,
+  },
+  exerciseCardPhase2: {
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.secondary,
+  },
+  exerciseCardPhase3: {
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+  },
+  exerciseRowWithDemo: {
+    marginBottom: Spacing.md,
+  },
+  playDemoBtn: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.primary + '20',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  playDemoBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  videoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  videoModalContent: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    width: '100%',
+    maxWidth: 400,
+  },
+  videoModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+  },
+  videoPlayerWrapper: {
+    width: '100%',
+    height: 240,
+    borderRadius: Radius.md,
+    marginBottom: Spacing.md,
+    backgroundColor: '#000',
+    overflow: 'hidden',
+  },
+  videoPlayer: {
+    width: '100%',
+    height: '100%',
+  },
+  videoModalClose: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  videoModalCloseText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.primary,
   },
   cardTitle: {
     fontSize: 16,

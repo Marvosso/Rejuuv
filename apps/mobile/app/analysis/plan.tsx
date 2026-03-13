@@ -1,8 +1,20 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Linking, Alert, ActivityIndicator, Modal, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Video } from 'expo-av';
+import { getSession } from '../../lib/auth';
+import { subscriptionApi } from '../../lib/api-client';
+import { getLocalVideoForActivity } from '../../lib/localVideos';
 import { RecoveryPlan, RecoveryPhase } from '../../lib/types';
 import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
+
+interface ExerciseVideo {
+  id: string;
+  exercise_key: string;
+  body_area: string | null;
+  video_url: string;
+  duration_sec: number;
+}
 
 const PHASE_CONFIGS = [
   { key: 1, label: 'Phase 1', range: 'Days 1–7', color: Colors.success, icon: '🌱' },
@@ -16,6 +28,57 @@ export default function RecoveryPlanScreen() {
   const [activePhase, setActivePhase] = useState<number>(1);
   const [expandedExercise, setExpandedExercise] = useState<number | null>(null);
   const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
+  const [trialLoading, setTrialLoading] = useState(false);
+  const [exerciseVideos, setExerciseVideos] = useState<ExerciseVideo[]>([]);
+  const [playingLocalVideo, setPlayingLocalVideo] = useState<{ source: number; title: string } | null>(null);
+  const videoWrapperRef = useRef<View>(null);
+
+  // On web, force the <video> element to fit the container (expo-av often mis-sizes it)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !playingLocalVideo) return;
+    const id = setTimeout(() => {
+      const wrapper = videoWrapperRef.current as unknown as HTMLElement | null;
+      const video = wrapper?.querySelector?.('video');
+      if (video && video.style) {
+        video.style.position = 'relative';
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'contain';
+        video.style.display = 'block';
+      }
+    }, 100);
+    return () => clearTimeout(id);
+  }, [playingLocalVideo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await getSession();
+        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+        const res = await fetch(`${apiUrl}/exercise-videos`, {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.videos)) setExerciseVideos(data.videos);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const getVideoForActivity = (activityText: string): ExerciseVideo | undefined => {
+    const normalized = activityText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+    return exerciseVideos.find((v) => {
+      const keyAsPhrase = v.exercise_key.replace(/_/g, ' ');
+      return normalized.includes(keyAsPhrase) || keyAsPhrase.split(' ').every((w) => normalized.includes(w));
+    });
+  };
+
+  const hasFormCheckVideo = (activityText: string) =>
+    getLocalVideoForActivity(activityText) || getVideoForActivity(activityText);
 
   const planParam = params.plan;
   let plan: RecoveryPlan = {
@@ -69,6 +132,22 @@ export default function RecoveryPlanScreen() {
           plan_id: (plan as any).id || (plan as any).plan_id || '',
         }).toString()
     );
+  };
+
+  const handleStartTrial = async () => {
+    setTrialLoading(true);
+    try {
+      const result = await subscriptionApi.checkout(undefined, 7);
+      if (result.url) {
+        await Linking.openURL(result.url);
+      } else {
+        Alert.alert('Error', result.error ?? 'Could not start trial.');
+      }
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+    } finally {
+      setTrialLoading(false);
+    }
   };
 
   return (
@@ -178,6 +257,24 @@ export default function RecoveryPlanScreen() {
                       ]}>
                         {exercise}
                       </Text>
+                      {hasFormCheckVideo(exercise) && (
+                        <TouchableOpacity
+                          style={styles.playDemoBtnInline}
+                          onPress={(e) => {
+                            e?.stopPropagation?.();
+                            const local = getLocalVideoForActivity(exercise);
+                            if (local) {
+                              setPlayingLocalVideo({ source: local.source, title: exercise });
+                            } else {
+                              const apiVideo = getVideoForActivity(exercise);
+                              if (apiVideo?.video_url) Linking.openURL(apiVideo.video_url);
+                            }
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.playDemoBtnInlineText}>▶ Play demo</Text>
+                        </TouchableOpacity>
+                      )}
                       <Text style={styles.exerciseExpandIcon}>
                         {expandedExercise === index ? '▲' : '▼'}
                       </Text>
@@ -187,6 +284,22 @@ export default function RecoveryPlanScreen() {
                         <Text style={styles.exerciseDetailsText}>
                           Tap the checkbox when you've completed this exercise. Consistency is key to recovery — aim to complete each exercise every day.
                         </Text>
+                        {hasFormCheckVideo(exercise) && (
+                          <TouchableOpacity
+                            style={styles.formCheckButton}
+                            onPress={() => {
+                              const local = getLocalVideoForActivity(exercise);
+                              if (local) {
+                                setPlayingLocalVideo({ source: local.source, title: exercise });
+                              } else {
+                                const apiVideo = getVideoForActivity(exercise);
+                                if (apiVideo?.video_url) Linking.openURL(apiVideo.video_url);
+                              }
+                            }}
+                          >
+                            <Text style={styles.formCheckButtonText}>▶ Play form check</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                     )}
                   </View>
@@ -236,6 +349,19 @@ export default function RecoveryPlanScreen() {
           </View>
         )}
 
+        {/* Pro trial CTA */}
+        <TouchableOpacity
+          style={styles.trialCta}
+          onPress={handleStartTrial}
+          disabled={trialLoading}
+        >
+          {trialLoading ? (
+            <ActivityIndicator size="small" color={Colors.primary} />
+          ) : (
+            <Text style={styles.trialCtaText}>Try Pro free — 7-day trial</Text>
+          )}
+        </TouchableOpacity>
+
         {/* Spacer for FAB */}
         <View style={{ height: 100 }} />
       </ScrollView>
@@ -249,6 +375,41 @@ export default function RecoveryPlanScreen() {
         <Text style={styles.fabIcon}>✏️</Text>
         <Text style={styles.fabText}>Start Check-In</Text>
       </TouchableOpacity>
+
+      {/* Local form-check video modal */}
+      <Modal
+        visible={playingLocalVideo !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setPlayingLocalVideo(null)}
+      >
+        <View style={styles.videoModalOverlay}>
+          <View style={styles.videoModalContent}>
+            {playingLocalVideo && (
+              <>
+                <Text style={styles.videoModalTitle} numberOfLines={2}>{playingLocalVideo.title}</Text>
+                <View ref={videoWrapperRef} style={styles.videoPlayerWrapper} collapsable={false}>
+                  <Video
+                    key={playingLocalVideo.title}
+                    source={playingLocalVideo.source}
+                    style={styles.videoModalPlayer}
+                    useNativeControls
+                    resizeMode="contain"
+                    shouldPlay
+                    isLooping={false}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={styles.videoModalClose}
+                  onPress={() => setPlayingLocalVideo(null)}
+                >
+                  <Text style={styles.videoModalCloseText}>Close</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -444,6 +605,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textMuted,
   },
+  playDemoBtnInline: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: Colors.primary + '18',
+    marginRight: 8,
+  },
+  playDemoBtnInlineText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
   exerciseDetails: {
     borderTopWidth: 1,
     borderTopColor: Colors.border,
@@ -520,6 +693,30 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     lineHeight: 23,
   },
+  trialCta: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  trialCtaText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  formCheckButton: {
+    marginTop: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primaryLight,
+    borderRadius: Radius.sm,
+  },
+  formCheckButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.primaryDark,
+  },
   fab: {
     position: 'absolute',
     bottom: 32,
@@ -540,5 +737,43 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+  videoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    padding: Spacing.lg,
+  },
+  videoModalContent: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    overflow: 'hidden',
+  },
+  videoModalTitle: {
+    padding: Spacing.md,
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  videoPlayerWrapper: {
+    width: '100%',
+    height: 240,
+    backgroundColor: '#000',
+    borderRadius: 8,
+    marginBottom: Spacing.md,
+    overflow: 'hidden',
+  },
+  videoModalPlayer: {
+    width: '100%',
+    height: '100%',
+  },
+  videoModalClose: {
+    padding: Spacing.lg,
+    alignItems: 'center',
+  },
+  videoModalCloseText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.primary,
   },
 });

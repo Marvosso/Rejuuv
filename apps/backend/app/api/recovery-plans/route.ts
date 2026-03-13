@@ -7,6 +7,7 @@ import {
   getUserSubscriptionStatus,
   getUserPlanCount,
 } from '../../../lib/subscription';
+import { STARTER_PLAN } from '../../../lib/starter-plan';
 
 export async function POST(request: Request) {
   try {
@@ -26,15 +27,10 @@ export async function POST(request: Request) {
     ]);
 
     if (!isActive && planCount >= 1) {
+      // Free tier: return static starter plan instead of blocking
       return NextResponse.json(
-        {
-          error: 'Free plan limit reached',
-          message:
-            'You have already generated a recovery plan on the free tier. ' +
-            'Upgrade to Pro ($19/month) for unlimited plan generation.',
-          upgrade_required: true,
-        },
-        { status: 403 }
+        { ...STARTER_PLAN, starter: true, upgrade_required: true },
+        { status: 200 }
       );
     }
     // ----------------------------------------------------------------

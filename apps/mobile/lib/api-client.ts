@@ -47,10 +47,16 @@ export const subscriptionApi = {
   /**
    * POST /api/subscriptions/checkout
    * Returns { url } for new subscriptions or { subscription } for upgrades.
+   * @param subscriptionId - optional; for upgrade/downgrade of existing subscription
+   * @param trialDays - optional; for new subscription only (e.g. 7 for 7-day trial)
    */
-  checkout: async (subscriptionId?: string): Promise<{ url?: string; subscription?: Subscription }> => {
-    const body: Record<string, string> = {};
+  checkout: async (
+    subscriptionId?: string,
+    trialDays?: number
+  ): Promise<{ url?: string; subscription?: Subscription; error?: string }> => {
+    const body: Record<string, string | number> = {};
     if (subscriptionId) body.subscription_id = subscriptionId;
+    if (trialDays != null && trialDays > 0) body.trial_days = trialDays;
     const res = await fetch(`${BASE_URL}/subscriptions/checkout`, {
       method: 'POST',
       headers: await authHeaders(),

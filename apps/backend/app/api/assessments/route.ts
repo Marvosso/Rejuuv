@@ -22,24 +22,39 @@ export async function POST(request: Request) {
       safetyPrompt.user,
       'claude-haiku-4-5-20251001'
     );
-    const safetyResult = extractJSON(safetyResponse);
+    const safetyResult = extractJSON(safetyResponse) as {
+      status?: string;
+      reasoning_internal?: string;
+      user_message?: string | null;
+    };
 
-    // Step 2: Check for red flags
-    if (safetyResult.red_flag_detected === true) {
-      // Save blocked assessment to Supabase
+    const isRefer = safetyResult?.status === 'REFER';
+    const userMessage =
+      safetyResult?.user_message?.trim() ||
+      "Based on the symptoms you've described, it's important that you consult a healthcare professional (such as a doctor or physical therapist) for a formal evaluation before starting any movement routine. Your safety is our priority.";
+    const recommendedAction =
+      "Consult a healthcare professional for a formal evaluation before starting any movement routine.";
+
+    const payloadForClient = {
+      red_flag_detected: isRefer,
+      message: isRefer ? userMessage : '',
+      recommended_action: isRefer ? recommendedAction : '',
+      reasoning_internal: safetyResult?.reasoning_internal,
+      blocked: isRefer,
+    };
+
+    // Step 2: Check for red flags (REFER)
+    if (isRefer) {
       const { error: dbError } = await supabase.from('assessments').insert({
         user_id,
         body_area: intakeData.body_area,
         intake_data: JSON.stringify(intakeData),
-        analysis_result: JSON.stringify({ ...safetyResult, blocked: true }),
+        analysis_result: JSON.stringify({ ...payloadForClient, blocked: true }),
         safety_flagged: true,
       });
       if (dbError) console.error('Failed to save blocked assessment:', dbError);
 
-      return NextResponse.json(
-        { ...safetyResult, blocked: true },
-        { status: 200 }
-      );
+      return NextResponse.json(payloadForClient, { status: 200 });
     }
 
     // Step 3: Run analysis if no red flags

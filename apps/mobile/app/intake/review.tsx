@@ -54,6 +54,7 @@ export default function ReviewScreen() {
       ? JSON.parse(decodeURIComponent(params.movement_limitations))
       : params.movement_limitations
     : [];
+  const notes = (params.notes as string) || '';
 
   const intakeData = {
     body_area: bodyArea,
@@ -63,6 +64,7 @@ export default function ReviewScreen() {
     trigger: trigger,
     pain_level: painLevel,
     movement_limitations: movementLimitations,
+    ...(notes ? { notes } : {}),
   };
 
   const handleGetAnalysis = async () => {
@@ -102,7 +104,10 @@ export default function ReviewScreen() {
 
       const analysisData = encodeURIComponent(JSON.stringify(data));
       const intakeDataParam = encodeURIComponent(JSON.stringify(intakeData));
-      router.push(`/analysis/results?analysis=${analysisData}&intakeData=${intakeDataParam}`);
+      const bodyAreaParam = encodeURIComponent(bodyArea);
+      router.push(
+        `/analysis/day1-win?body_area=${bodyAreaParam}&analysis=${analysisData}&intakeData=${intakeDataParam}`
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       Alert.alert(
@@ -137,9 +142,9 @@ export default function ReviewScreen() {
     <View style={styles.container}>
       {/* Progress bar */}
       <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: '75%' }]} />
+        <View style={[styles.progressFill, { width: '100%' }]} />
       </View>
-      <Text style={styles.progressLabel}>Step 3 of 4</Text>
+      <Text style={styles.progressLabel}>Review</Text>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Review your info</Text>
@@ -178,7 +183,15 @@ export default function ReviewScreen() {
             </View>
           ) : null}
 
-          <View style={styles.reviewRow}>
+          <View
+            style={[
+              styles.reviewRow,
+              !notes &&
+                movementLimitations.length === 0 &&
+                trigger.length === 0 &&
+                styles.reviewRowLast,
+            ]}
+          >
             <Text style={styles.rowLabel}>Pain Level</Text>
             <View style={styles.painLevelDisplay}>
               <Text style={styles.painEmoji}>{PAIN_EMOJIS[painLevel]}</Text>
@@ -190,16 +203,28 @@ export default function ReviewScreen() {
           </View>
 
           {trigger.length > 0 ? (
-            <View style={styles.reviewRow}>
+            <View
+              style={[
+                styles.reviewRow,
+                !notes && movementLimitations.length === 0 && styles.reviewRowLast,
+              ]}
+            >
               <Text style={styles.rowLabel}>Triggers</Text>
               <Text style={styles.rowValue}>{formatArray(trigger)}</Text>
             </View>
           ) : null}
 
           {movementLimitations.length > 0 ? (
-            <View style={[styles.reviewRow, styles.reviewRowLast]}>
+            <View style={[styles.reviewRow, !notes && styles.reviewRowLast]}>
               <Text style={styles.rowLabel}>Limitations</Text>
               <Text style={styles.rowValue}>{formatArray(movementLimitations)}</Text>
+            </View>
+          ) : null}
+
+          {notes ? (
+            <View style={[styles.reviewRow, styles.reviewRowLast]}>
+              <Text style={styles.rowLabel}>Notes</Text>
+              <Text style={styles.rowValue}>{notes}</Text>
             </View>
           ) : null}
         </View>

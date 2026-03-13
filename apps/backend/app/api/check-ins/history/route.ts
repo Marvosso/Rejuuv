@@ -30,6 +30,25 @@ export async function GET(request: Request) {
 
     const rows = checkIns ?? [];
 
+    // Compute streak: consecutive days (by date) with at least one check-in, ending today or yesterday
+    const dateSet = new Set<string>();
+    for (const r of rows) {
+      const d = new Date(r.created_at);
+      dateSet.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`);
+    }
+    let streakDays = 0;
+    const today = new Date();
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      if (dateSet.has(key)) {
+        streakDays++;
+      } else {
+        break;
+      }
+    }
+
     // Compute summary stats
     const total = rows.length;
     const levelsWithData = rows.filter((r) => r.pain_level !== null);
@@ -68,7 +87,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         checkIns: rows,
-        summary: { total, avg_pain: avgPain, trend },
+        summary: { total, avg_pain: avgPain, trend, streak_days: streakDays },
         by_plan: byPlan,
       },
       { status: 200 }

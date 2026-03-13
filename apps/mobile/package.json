@@ -6,13 +6,16 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@supabase/supabase-js": "^2.93.3",
-    "axios": "^1.13.4",
+    "axios": "^1.13.5",
     "expo": "~54.0.33",
+    "expo-av": "^16.0.8",
+    "expo-notifications": "~0.31.0",
     "expo-router": "^6.0.23",
     "expo-status-bar": "~3.0.9",
     "expo-web-browser": "~14.0.2",
@@ -26,6 +29,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "patch-package": "^8.0.0",
     "typescript": "~5.9.2"
   },
   "private": true

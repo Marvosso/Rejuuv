@@ -27,6 +27,7 @@ interface Summary {
   total: number;
   avg_pain: number | null;
   trend: 'improving' | 'stable' | 'worsening';
+  streak_days?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -55,6 +56,16 @@ function trendLabel(trend: Summary['trend']): string {
   if (trend === 'worsening') return 'Worsening';
   return 'Stable';
 }
+
+/** Tiny trend arrow for check-in: change from previous day (Better = ↓, Worse = ↑, Same = −). */
+function trendArrow(painChange: string): { char: string; color: string } {
+  if (painChange === 'Better') return { char: '↓', color: '#16a34a' };
+  if (painChange === 'Worse') return { char: '↑', color: '#dc2626' };
+  return { char: '−', color: '#9ca3af' };
+}
+
+const CHART_SKELETON_HEIGHT = 200;
+const CHART_SKELETON_WIDTH = SCREEN_WIDTH - 64;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -153,6 +164,12 @@ export default function HistoryScreen() {
         </TouchableOpacity>
         <Text style={styles.heading}>Pain History</Text>
         <Text style={styles.subheading}>Last 90 days of check-ins</Text>
+        {summary && typeof summary.streak_days === 'number' && summary.streak_days > 0 && (
+          <View style={styles.streakBadge}>
+            <Text style={styles.streakEmoji}>🔥</Text>
+            <Text style={styles.streakText}>{summary.streak_days} day streak</Text>
+          </View>
+        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -245,10 +262,36 @@ export default function HistoryScreen() {
                   segments={5}
                 />
               ) : (
-                <View style={styles.chartEmpty}>
-                  <Text style={styles.chartEmptyText}>
-                    Need at least 2 check-ins to show a chart.
-                  </Text>
+                <View style={styles.chartSkeletonWrap}>
+                  <View style={styles.chartSkeleton}>
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.chartSkeletonGridLine,
+                          { top: (i / 5) * (CHART_SKELETON_HEIGHT - 24) + 12 },
+                        ]}
+                      />
+                    ))}
+                    <View style={styles.chartSkeletonBars}>
+                      {[40, 65, 35, 70, 50, 45].map((h, i) => (
+                        <View
+                          key={i}
+                          style={[
+                            styles.chartSkeletonBar,
+                            {
+                              height: Math.max(8, (h / 100) * (CHART_SKELETON_HEIGHT - 32)),
+                            },
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                  <View style={styles.chartSkeletonOverlay}>
+                    <Text style={styles.chartSkeletonOverlayText}>
+                      Your progress will appear here after 2 check-ins.
+                    </Text>
+                  </View>
                 </View>
               )}
               <Text style={styles.chartNote}>Y-axis: pain level (0–10)</Text>
@@ -258,25 +301,22 @@ export default function HistoryScreen() {
             <Text style={styles.sectionTitle}>Summary</Text>
             <View style={styles.summaryRow}>
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>
+                <Text style={styles.summaryValueLarge}>
                   {selectedPlan === 'all' ? (summary?.total ?? 0) : activeRows.length}
                 </Text>
-                <Text style={styles.summaryLabel}>Check-ins</Text>
+                <Text style={styles.summaryLabelMuted}>Check-ins</Text>
               </View>
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>
+                <Text style={styles.summaryValueLarge}>
                   {filteredAvg !== null ? filteredAvg : '—'}
                 </Text>
-                <Text style={styles.summaryLabel}>Avg Pain</Text>
+                <Text style={styles.summaryLabelMuted}>Avg Pain</Text>
               </View>
               <View style={[styles.summaryCard, styles.summaryCardWide]}>
-                <Text style={styles.summaryValue}>
-                  {trendEmoji(filteredTrend)}{' '}
-                  <Text style={{ color: trendColor(filteredTrend) }}>
-                    {trendLabel(filteredTrend)}
-                  </Text>
+                <Text style={[styles.summaryValueLarge, { color: trendColor(filteredTrend) }]}>
+                  {trendEmoji(filteredTrend)} {trendLabel(filteredTrend)}
                 </Text>
-                <Text style={styles.summaryLabel}>Trend</Text>
+                <Text style={styles.summaryLabelMuted}>Trend</Text>
               </View>
             </View>
 
@@ -286,36 +326,44 @@ export default function HistoryScreen() {
               .slice()
               .reverse()
               .slice(0, 10)
-              .map((ci) => (
-                <View key={ci.id} style={styles.checkInRow}>
-                  <View style={styles.checkInLeft}>
-                    <View
-                      style={[
-                        styles.checkInDot,
-                        {
-                          backgroundColor:
-                            ci.pain_change === 'Better'
-                              ? '#16a34a'
-                              : ci.pain_change === 'Worse'
-                              ? '#dc2626'
-                              : '#d97706',
-                        },
-                      ]}
-                    />
-                    <View>
-                      <Text style={styles.checkInPain}>
-                        {ci.pain_level !== null ? `Pain ${ci.pain_level}/10` : 'No level recorded'}
-                      </Text>
-                      <Text style={styles.checkInMeta}>
-                        {ci.pain_change} · {ci.difficulty}
-                      </Text>
+              .map((ci) => {
+                const arrow = trendArrow(ci.pain_change);
+                return (
+                  <View key={ci.id} style={styles.checkInRow}>
+                    <View style={styles.checkInLeft}>
+                      <View style={[styles.checkInTrendArrow, { backgroundColor: arrow.color + '20' }]}>
+                        <Text style={[styles.checkInTrendArrowText, { color: arrow.color }]}>
+                          {arrow.char}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.checkInDot,
+                          {
+                            backgroundColor:
+                              ci.pain_change === 'Better'
+                                ? '#16a34a'
+                                : ci.pain_change === 'Worse'
+                                  ? '#dc2626'
+                                  : '#d97706',
+                          },
+                        ]}
+                      />
+                      <View>
+                        <Text style={styles.checkInPain}>
+                          {ci.pain_level !== null ? `Pain ${ci.pain_level}/10` : 'No level recorded'}
+                        </Text>
+                        <Text style={styles.checkInMeta}>
+                          {ci.pain_change} · {ci.difficulty}
+                        </Text>
+                      </View>
                     </View>
+                    <Text style={styles.checkInDate}>
+                      {formatShortDate(ci.created_at)}
+                    </Text>
                   </View>
-                  <Text style={styles.checkInDate}>
-                    {formatShortDate(ci.created_at)}
-                  </Text>
-                </View>
-              ))}
+                );
+              })}
           </>
         )}
       </ScrollView>
@@ -339,6 +387,19 @@ const styles = StyleSheet.create({
   backBtnText: { color: '#2563eb', fontSize: 15, fontWeight: '500' },
   heading: { fontSize: 24, fontWeight: '700', color: '#111827', marginBottom: 2 },
   subheading: { fontSize: 13, color: '#6b7280' },
+  streakBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#fef3c7',
+    borderRadius: 20,
+    gap: 6,
+  },
+  streakEmoji: { fontSize: 18 },
+  streakText: { fontSize: 14, fontWeight: '700', color: '#92400e' },
   content: { padding: 20, paddingBottom: 40 },
   centered: { alignItems: 'center', paddingVertical: 40, gap: 12 },
   loadingText: { fontSize: 15, color: '#6b7280' },
@@ -385,12 +446,56 @@ const styles = StyleSheet.create({
   },
   chartTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 12 },
   chart: { borderRadius: 10, marginLeft: -8 },
-  chartEmpty: {
-    height: 120,
+  chartSkeletonWrap: {
+    position: 'relative',
+    width: CHART_SKELETON_WIDTH,
+    height: CHART_SKELETON_HEIGHT,
+  },
+  chartSkeleton: {
+    width: CHART_SKELETON_WIDTH,
+    height: CHART_SKELETON_HEIGHT,
+    backgroundColor: '#f9fafb',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  chartSkeletonGridLine: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    height: 1,
+    backgroundColor: '#e5e7eb',
+  },
+  chartSkeletonBars: {
+    position: 'absolute',
+    bottom: 16,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  chartSkeletonBar: {
+    flex: 1,
+    backgroundColor: '#d1d5db',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    minHeight: 8,
+  },
+  chartSkeletonOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 10,
   },
-  chartEmptyText: { color: '#9ca3af', fontSize: 14, textAlign: 'center' },
+  chartSkeletonOverlayText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6b7280',
+    textAlign: 'center',
+    paddingHorizontal: 24,
+  },
   chartNote: { fontSize: 11, color: '#9ca3af', marginTop: 8, textAlign: 'center' },
 
   // Summary
@@ -400,15 +505,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
     borderRadius: 12,
-    padding: 14,
+    padding: 16,
     alignItems: 'center',
     elevation: 1,
   },
   summaryCardWide: { flex: 1.4 },
+  summaryValueLarge: { fontSize: 26, fontWeight: '800', color: '#111827', marginBottom: 4 },
+  summaryLabelMuted: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '500' },
   summaryValue: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 4 },
   summaryLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 },
 
   // Check-in list
+  checkInTrendArrow: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkInTrendArrowText: { fontSize: 12, fontWeight: '700' },
   checkInRow: {
     flexDirection: 'row',
     alignItems: 'center',

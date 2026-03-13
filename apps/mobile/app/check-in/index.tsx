@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { getSession } from '../../lib/auth';
-import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
+import { Colors, Spacing, Radius, getShadow } from '../../lib/theme';
 
 const PAIN_CHANGE_OPTIONS = [
   { value: 'Better', emoji: '😊', color: Colors.success },
@@ -27,10 +27,25 @@ const DIFFICULTY_OPTIONS = [
 
 const PAIN_EMOJIS = ['', '😊', '🙂', '😐', '😕', '😟', '😣', '😢', '😭', '😫', '🤯'];
 
+// 1-3 Green, 4-6 Yellow, 7-8 Orange, 9-10 Red
 const getPainColor = (level: number) => {
   if (level <= 3) return Colors.success;
   if (level <= 6) return Colors.warning;
+  if (level <= 8) return Colors.secondary;
   return Colors.danger;
+};
+
+const PAIN_LEVEL_MESSAGES: Record<number, string> = {
+  1: 'Minimal or no pain',
+  2: 'Very mild, barely noticeable',
+  3: 'Mild discomfort',
+  4: 'Mild to moderate',
+  5: 'Moderate pain',
+  6: 'Significant discomfort, but manageable',
+  7: 'Strong discomfort',
+  8: 'Severe pain',
+  9: 'Very severe',
+  10: 'Worst pain imaginable',
 };
 
 export default function CheckInScreen() {
@@ -53,6 +68,7 @@ export default function CheckInScreen() {
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [notesFocused, setNotesFocused] = useState(false);
+  const [notesExpanded, setNotesExpanded] = useState(false);
 
   const toggleActivity = (exercise: string) => {
     setCompletedActivities((prev) =>
@@ -103,21 +119,26 @@ export default function CheckInScreen() {
         <Text style={styles.heading}>Daily Check-In ✏️</Text>
         <Text style={styles.subheading}>How's your recovery going today?</Text>
 
-        {/* Section 1: Pain change */}
+        {/* Section 1: Pain change — toggle group */}
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionLabel}>How is your pain?</Text>
             <Text style={styles.required}>*</Text>
           </View>
-          <View style={styles.row}>
+          <View style={styles.toggleGroup}>
             {PAIN_CHANGE_OPTIONS.map(({ value, emoji, color }) => {
               const selected = painChange === value;
               return (
                 <TouchableOpacity
                   key={value}
                   style={[
-                    styles.painChangeButton,
-                    selected && { backgroundColor: color, borderColor: color },
+                    styles.toggleOption,
+                    selected && {
+                      backgroundColor: color + '18',
+                      borderColor: color,
+                      borderWidth: 3,
+                      ...getShadow('card'),
+                    },
                   ]}
                   onPress={() => setPainChange(value)}
                   activeOpacity={0.8}
@@ -125,7 +146,7 @@ export default function CheckInScreen() {
                   <Text style={styles.painChangeEmoji}>{emoji}</Text>
                   <Text style={[
                     styles.painChangeText,
-                    selected && styles.painChangeTextSelected,
+                    selected && { color, fontWeight: '700' },
                   ]}>
                     {value}
                   </Text>
@@ -135,7 +156,7 @@ export default function CheckInScreen() {
           </View>
         </View>
 
-        {/* Section 2: Pain level */}
+        {/* Section 2: Pain level — large 1-10 buttons with gradient + dynamic message */}
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionLabel}>Rate your pain</Text>
@@ -150,12 +171,17 @@ export default function CheckInScreen() {
                   key={n}
                   style={[
                     styles.painLevelBtn,
-                    isSelected && { backgroundColor: numColor, borderColor: numColor },
+                    { borderColor: numColor },
+                    isSelected && { backgroundColor: numColor, borderWidth: 3 },
                   ]}
                   onPress={() => setPainLevel(n)}
                   activeOpacity={0.8}
                 >
-                  <Text style={[styles.painLevelText, isSelected && styles.painLevelTextSelected]}>
+                  <Text style={[
+                    styles.painLevelText,
+                    { color: isSelected ? Colors.textInverse : numColor },
+                    isSelected && styles.painLevelTextSelected,
+                  ]}>
                     {n}
                   </Text>
                 </TouchableOpacity>
@@ -163,30 +189,35 @@ export default function CheckInScreen() {
             })}
           </View>
           {painLevel > 0 && (
-            <View style={[styles.painLevelInfo, { backgroundColor: getPainColor(painLevel) + '15' }]}>
+            <View style={[styles.painLevelInfo, { backgroundColor: getPainColor(painLevel) + '18' }]}>
               <Text style={styles.painEmoji}>{PAIN_EMOJIS[painLevel]}</Text>
               <Text style={[styles.painLevelDescription, { color: getPainColor(painLevel) }]}>
-                {painLevel <= 3 ? 'Mild pain' : painLevel <= 6 ? 'Moderate pain' : 'Severe pain'}
+                {painLevel}: {PAIN_LEVEL_MESSAGES[painLevel]}
               </Text>
             </View>
           )}
         </View>
 
-        {/* Section 3: Difficulty */}
+        {/* Section 3: Difficulty — toggle group */}
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionLabel}>Exercise difficulty?</Text>
             <Text style={styles.required}>*</Text>
           </View>
-          <View style={styles.row}>
+          <View style={styles.toggleGroup}>
             {DIFFICULTY_OPTIONS.map(({ value, emoji, color }) => {
               const selected = difficulty === value;
               return (
                 <TouchableOpacity
                   key={value}
                   style={[
-                    styles.painChangeButton,
-                    selected && { backgroundColor: color, borderColor: color },
+                    styles.toggleOption,
+                    selected && {
+                      backgroundColor: color + '18',
+                      borderColor: color,
+                      borderWidth: 3,
+                      ...getShadow('card'),
+                    },
                   ]}
                   onPress={() => setDifficulty(value)}
                   activeOpacity={0.8}
@@ -194,7 +225,7 @@ export default function CheckInScreen() {
                   <Text style={styles.painChangeEmoji}>{emoji}</Text>
                   <Text style={[
                     styles.painChangeText,
-                    selected && styles.painChangeTextSelected,
+                    selected && { color, fontWeight: '700' },
                   ]}>
                     {value}
                   </Text>
@@ -229,20 +260,33 @@ export default function CheckInScreen() {
           </View>
         )}
 
-        {/* Section 5: Notes */}
+        {/* Section 5: Notes — expand only if user wants */}
         <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Notes <Text style={styles.optional}>(optional)</Text></Text>
-          <TextInput
-            style={[styles.textInput, notesFocused && styles.textInputFocused]}
-            placeholder="Any additional notes about today's session..."
-            placeholderTextColor={Colors.textMuted}
-            multiline
-            numberOfLines={3}
-            value={notes}
-            onChangeText={setNotes}
-            onFocus={() => setNotesFocused(true)}
-            onBlur={() => setNotesFocused(false)}
-          />
+          {!notesExpanded ? (
+            <TouchableOpacity
+              style={styles.notesExpandTrigger}
+              onPress={() => setNotesExpanded(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.notesExpandText}>Add more detail (optional)</Text>
+              <Text style={styles.notesExpandHint}>Tap to add notes about today's session</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <Text style={styles.sectionLabel}>Notes <Text style={styles.optional}>(optional)</Text></Text>
+              <TextInput
+                style={[styles.textInput, notesFocused && styles.textInputFocused]}
+                placeholder="Any additional notes about today's session..."
+                placeholderTextColor={Colors.textMuted}
+                multiline
+                numberOfLines={3}
+                value={notes}
+                onChangeText={setNotes}
+                onFocus={() => setNotesFocused(true)}
+                onBlur={() => setNotesFocused(false)}
+              />
+            </>
+          )}
         </View>
       </ScrollView>
 
@@ -317,7 +361,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.sm,
   },
-  painChangeButton: {
+  toggleGroup: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  toggleOption: {
     flex: 1,
     paddingVertical: 14,
     borderRadius: Radius.md,
@@ -343,20 +391,17 @@ const styles = StyleSheet.create({
   painScaleRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
     marginBottom: Spacing.md,
   },
   painLevelBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: Radius.sm,
+    width: 52,
+    height: 52,
+    borderRadius: Radius.md,
     borderWidth: 2,
-    borderColor: Colors.border,
     backgroundColor: Colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 44,
-    minHeight: 44,
   },
   painLevelText: {
     fontSize: 16,
@@ -414,6 +459,24 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: Colors.primary,
     fontWeight: '700',
+  },
+  notesExpandTrigger: {
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+  },
+  notesExpandText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.primary,
+    marginBottom: 4,
+  },
+  notesExpandHint: {
+    fontSize: 13,
+    color: Colors.textMuted,
   },
   textInput: {
     borderWidth: 2,

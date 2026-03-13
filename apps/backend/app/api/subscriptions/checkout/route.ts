@@ -21,6 +21,7 @@ import { resolveStripeCustomer } from '../../../../lib/stripe-customer';
  * Body:
  *   price_id        string?  – target Stripe price ID (defaults to STRIPE_PRICE_ID_PRO)
  *   subscription_id string?  – existing subscription to modify (upgrade/downgrade)
+ *   trial_days      number?  – for new subscription only: add a free trial (e.g. 7 for 7-day trial)
  *
  * The frontend can distinguish the two responses by checking for the
  * presence of `url` vs `subscription` in the JSON.
@@ -33,9 +34,10 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { price_id: bodyPriceId, subscription_id } = body as {
+    const { price_id: bodyPriceId, subscription_id, trial_days } = body as {
       price_id?: string;
       subscription_id?: string;
+      trial_days?: number;
     };
 
     // price_id is optional — fall back to the configured Pro price so mobile
@@ -146,7 +148,7 @@ export async function POST(request: Request) {
     const cancelUrl =
       process.env.STRIPE_CANCEL_URL ?? `${appUrl}/subscription/cancel`;
 
-    const session = await stripe.checkout.sessions.create({
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
       mode: 'subscription',
       line_items: [{ price: price_id, quantity: 1 }],
@@ -154,7 +156,11 @@ export async function POST(request: Request) {
       cancel_url: cancelUrl,
       allow_promotion_codes: true,
       metadata: { supabase_user_id: userId },
-    });
+    };
+    if (trial_days != null && trial_days > 0 && !subscription_id) {
+      sessionParams.subscription_data = { trial_period_days: Math.min(30, Math.round(trial_days)) };
+    }
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     return NextResponse.json({ url: session.url });
   } catch (error) {
