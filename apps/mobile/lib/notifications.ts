@@ -1,6 +1,11 @@
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { getSession } from './auth';
+
+const easProjectId =
+  (process.env.EXPO_PUBLIC_PROJECT_ID as string | undefined) ||
+  (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId;
 
 /**
  * Request notification permission and register the Expo push token with the backend.
@@ -19,7 +24,7 @@ export async function registerPushToken(): Promise<void> {
     if (final !== 'granted') return;
 
     const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId: (process.env.EXPO_PUBLIC_PROJECT_ID as string) || undefined,
+      projectId: easProjectId,
     });
     const token = tokenData?.data;
     if (!token) return;

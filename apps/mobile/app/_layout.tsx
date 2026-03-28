@@ -16,10 +16,14 @@ function AuthGuard() {
     const inPublicRoute = PUBLIC_SEGMENTS.includes(segments[0] as string);
 
     if (!user && !inPublicRoute) {
-      // Not signed in — redirect to login
-      router.replace('/auth/login');
+      // Defer until after the root navigator mounts — immediate replace on cold start can crash on iOS release builds.
+      const t = setTimeout(() => {
+        router.replace('/auth/login');
+      }, 0);
+      return () => clearTimeout(t);
     }
-  }, [user, loading, segments]);
+    return undefined;
+  }, [user, loading, segments, router]);
 
   return null;
 }
