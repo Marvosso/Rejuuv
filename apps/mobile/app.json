@@ -14,6 +14,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "buildNumber": "2",
       "supportsTablet": true,
       "bundleIdentifier": "com.rejuuv.app",
       "infoPlist": {
@@ -37,6 +38,9 @@
         "projectId": "6d63ffe6-6660-4dc4-a16c-0b01756b14af"
       }
     },
-    "owner": "marvosso"
+    "owner": "marvosso",
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }

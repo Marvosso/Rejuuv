@@ -20,10 +20,18 @@
     "production": {
       "env": {
         "EXPO_PUBLIC_API_URL": "https://rejuuv.vercel.app/api"
+      },
+      "ios": {
+        "autoIncrement": "buildNumber"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6761282677",
+        "appleTeamId": "QQQBRZ5999"
+      }
+    }
   }
 }

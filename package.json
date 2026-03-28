@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "description": "AI-powered movement recovery guidance app",
   "private": true,
+  "dependencies": {
+    "react-native-svg": "15.12.1"
+  },
   "workspaces": [
     "apps/*",
     "shared"
   ],
   "overrides": {
     "ajv": ">=6.14.0",
-    "minimatch": ">=9.0.7"
+    "react-native-svg": "15.12.1"
   },
   "scripts": {
     "dev:mobile": "cd apps/mobile && npm start",

@@ -9,8 +9,9 @@ const projectRoot = __dirname;
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(projectRoot);
 
-// Configure Metro to resolve modules from workspace root
-config.watchFolders = [workspaceRoot];
+// Monorepo: keep Expo's default watch folders (workspace packages + root node_modules) and include repo root
+const defaultWatch = config.watchFolders ?? [];
+config.watchFolders = [...new Set([...defaultWatch, workspaceRoot])];
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
