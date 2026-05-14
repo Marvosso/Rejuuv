@@ -1,86 +1,48 @@
-import { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Linking, Alert, ActivityIndicator, Modal, Platform } from 'react-native';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Linking,
+  Alert,
+  ActivityIndicator,
+  LayoutAnimation,
+  Platform,
+  UIManager,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Video } from 'expo-av';
-import { getSession } from '../../lib/auth';
 import { subscriptionApi } from '../../lib/api-client';
-import { getLocalVideoForActivity } from '../../lib/localVideos';
-import { RecoveryPlan, RecoveryPhase } from '../../lib/types';
-import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
+import { fetchExerciseCatalog, type ExerciseCatalogRow } from '../../lib/exercises';
+import { RecoveryPlan } from '../../lib/types';
+import { normalizePhaseExercises, phaseExerciseCount } from '../../lib/recovery-plan-phase';
+import { Colors, Spacing, Radius, getShadow } from '../../lib/theme';
+import { PlanOverviewCard } from '../../components/plan/PlanOverviewCard';
+import { PlanPhaseExerciseSection } from '../../components/plan/PlanPhaseExerciseSection';
+import { PlanSafetyHabitsAccordion } from '../../components/plan/PlanSafetyHabitsAccordion';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
 
-interface ExerciseVideo {
-  id: string;
-  exercise_key: string;
-  body_area: string | null;
-  video_url: string;
-  duration_sec: number;
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const PHASE_CONFIGS = [
-  { key: 1, label: 'Phase 1', range: 'Days 1–7', color: Colors.success, icon: '🌱' },
-  { key: 2, label: 'Phase 2', range: 'Days 8–21', color: Colors.secondary, icon: '🔥' },
-  { key: 3, label: 'Phase 3', range: 'Week 4+', color: Colors.primary, icon: '🏆' },
-];
+function bodyAreaLabel(area: string) {
+  if (!area || !area.trim()) return 'Your recovery';
+  return area.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export default function RecoveryPlanScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
-  const [activePhase, setActivePhase] = useState<number>(1);
-  const [expandedExercise, setExpandedExercise] = useState<number | null>(null);
-  const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
+  const params = useLocalSearchParams<{ plan?: string; body_area?: string }>();
   const [trialLoading, setTrialLoading] = useState(false);
-  const [exerciseVideos, setExerciseVideos] = useState<ExerciseVideo[]>([]);
-  const [playingLocalVideo, setPlayingLocalVideo] = useState<{ source: number; title: string } | null>(null);
-  const videoWrapperRef = useRef<View>(null);
+  const [exerciseCatalog, setExerciseCatalog] = useState<ExerciseCatalogRow[]>([]);
+  const scrollRef = useRef<ScrollView>(null);
+  const [phase1LayoutY, setPhase1LayoutY] = useState(0);
+  const [phase1Open, setPhase1Open] = useState(false);
+  const [phase2Open, setPhase2Open] = useState(false);
+  const [phase3Open, setPhase3Open] = useState(false);
 
-  // On web, force the <video> element to fit the container (expo-av often mis-sizes it)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !playingLocalVideo) return;
-    const id = setTimeout(() => {
-      const wrapper = videoWrapperRef.current as unknown as HTMLElement | null;
-      const video = wrapper?.querySelector?.('video');
-      if (video && video.style) {
-        video.style.position = 'relative';
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'contain';
-        video.style.display = 'block';
-      }
-    }, 100);
-    return () => clearTimeout(id);
-  }, [playingLocalVideo]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const session = await getSession();
-        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-        const res = await fetch(`${apiUrl}/exercise-videos`, {
-          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
-        });
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (!cancelled && Array.isArray(data.videos)) setExerciseVideos(data.videos);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const getVideoForActivity = (activityText: string): ExerciseVideo | undefined => {
-    const normalized = activityText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
-    return exerciseVideos.find((v) => {
-      const keyAsPhrase = v.exercise_key.replace(/_/g, ' ');
-      return normalized.includes(keyAsPhrase) || keyAsPhrase.split(' ').every((w) => normalized.includes(w));
-    });
-  };
-
-  const hasFormCheckVideo = (activityText: string) =>
-    getLocalVideoForActivity(activityText) || getVideoForActivity(activityText);
-
-  const planParam = params.plan;
   let plan: RecoveryPlan = {
     focus_areas: [],
     recovery_plan: {
@@ -92,36 +54,53 @@ export default function RecoveryPlanScreen() {
     red_flags: [],
   };
 
-  if (typeof planParam === 'string') {
+  if (typeof params.plan === 'string') {
     try {
-      plan = JSON.parse(planParam);
-    } catch (error) {
-      console.error('Error parsing recovery plan:', error);
+      plan = JSON.parse(params.plan);
+    } catch (e) {
+      console.error('Error parsing recovery plan:', e);
     }
   }
 
   const phase1 = plan.recovery_plan.phase_1_days_1_to_7;
   const phase2 = plan.recovery_plan.phase_2_days_8_to_21;
   const phase3 = plan.recovery_plan.phase_3_week_4_and_beyond;
+  const phase1Exercises = normalizePhaseExercises(phase1);
+  const phase2Exercises = normalizePhaseExercises(phase2);
+  const phase3Exercises = normalizePhaseExercises(phase3);
+  const bodyArea = bodyAreaLabel(params.body_area ?? '');
 
-  const getActivePhaseData = () => {
-    switch (activePhase) {
-      case 1: return { data: phase1, config: PHASE_CONFIGS[0] };
-      case 2: return { data: phase2, config: PHASE_CONFIGS[1] };
-      case 3: return { data: phase3, config: PHASE_CONFIGS[2] };
-      default: return { data: phase1, config: PHASE_CONFIGS[0] };
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const area = typeof params.body_area === 'string' ? params.body_area : undefined;
+      const rows = await fetchExerciseCatalog({
+        body_area: area,
+      });
+      if (!cancelled) setExerciseCatalog(rows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.body_area]);
 
-  const { data: phaseData, config: phaseConfig } = getActivePhaseData();
-
-  const toggleExercise = (exerciseKey: string) => {
-    setCompletedExercises(prev => {
-      const next = new Set(prev);
-      if (next.has(exerciseKey)) next.delete(exerciseKey);
-      else next.add(exerciseKey);
-      return next;
+  const handleStartPhase1 = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPhase1Open(true);
+    setPhase2Open(false);
+    setPhase3Open(false);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, phase1LayoutY - 12),
+        animated: true,
+      });
     });
+  }, [phase1LayoutY]);
+
+  const togglePhase = (n: 1 | 2 | 3) => {
+    if (n === 1) setPhase1Open((o) => !o);
+    if (n === 2) setPhase2Open((o) => !o);
+    if (n === 3) setPhase3Open((o) => !o);
   };
 
   const handleStartCheckIn = () => {
@@ -129,7 +108,7 @@ export default function RecoveryPlanScreen() {
       '/check-in/?' +
         new URLSearchParams({
           recovery_plan: JSON.stringify(plan),
-          plan_id: (plan as any).id || (plan as any).plan_id || '',
+          plan_id: (plan as { id?: string }).id ?? '',
         }).toString()
     );
   };
@@ -150,206 +129,99 @@ export default function RecoveryPlanScreen() {
     }
   };
 
+  const hasAnyExercises =
+    phaseExerciseCount(phase1) + phaseExerciseCount(phase2) + phaseExerciseCount(phase3) > 0;
+
   return (
     <View style={styles.container}>
       <ScrollView
+        ref={scrollRef}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeText}>📋 Your Recovery Plan</Text>
-          </View>
-          <Text style={styles.headerTitle}>Personalized for You</Text>
-          <Text style={styles.headerSubtitle}>
-            Follow this 3-phase program to rebuild strength and reduce pain.
+        <View style={styles.screenHeader}>
+          <Text style={styles.screenHeaderKicker}>Your recovery plan</Text>
+          <Text style={styles.screenHeaderTitle}>Personalized for you</Text>
+        </View>
+
+        <ScreenErrorBoundary>
+        <PlanOverviewCard
+          bodyAreaLabel={bodyArea}
+          focusAreas={plan.focus_areas ?? []}
+          phaseLines={[
+            { phase: 1, label: 'Phase 1', range: 'Days 1–7', goal: phase1.goal },
+            { phase: 2, label: 'Phase 2', range: 'Days 8–21', goal: phase2.goal },
+            { phase: 3, label: 'Phase 3', range: 'Week 4+', goal: phase3.goal },
+          ]}
+        />
+
+        {hasAnyExercises ? (
+          <TouchableOpacity
+            style={[styles.startPhaseCta, getShadow('button')]}
+            onPress={handleStartPhase1}
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel="Start Phase 1 Day 1"
+          >
+            <Text style={styles.startPhaseCtaTitle}>Start Phase 1 – Day 1</Text>
+            <Text style={styles.startPhaseCtaSub}>Open your first exercises and demos</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {hasAnyExercises ? (
+          <Text style={styles.sectionTitle}>Your plan</Text>
+        ) : null}
+        {hasAnyExercises ? (
+          <Text style={styles.sectionSubtitle}>
+            Expand a phase when you're ready — details stay tucked away until then.
           </Text>
-        </View>
+        ) : null}
 
-        {/* Focus Areas */}
-        {plan.focus_areas?.length > 0 && (
-          <View style={styles.focusCard}>
-            <Text style={styles.focusCardTitle}>🎯 Focus Areas</Text>
-            <View style={styles.chipsRow}>
-              {plan.focus_areas.map((area, index) => (
-                <View key={index} style={styles.focusChip}>
-                  <Text style={styles.focusChipText}>{area}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
+        {hasAnyExercises ? (
+          <PlanPhaseExerciseSection
+            phaseNum={1}
+            title="Phase 1 · Days 1–7"
+            phaseGoal={phase1.goal}
+            exercises={phase1Exercises}
+            avoid={phase1.avoid}
+            catalog={exerciseCatalog}
+            accentColor={Colors.phase1}
+            expanded={phase1Open}
+            onToggle={() => togglePhase(1)}
+            onLayout={(e) => setPhase1LayoutY(e.nativeEvent.layout.y)}
+          />
+        ) : null}
+        {hasAnyExercises ? (
+          <PlanPhaseExerciseSection
+            phaseNum={2}
+            title="Phase 2 · Days 8–21"
+            phaseGoal={phase2.goal}
+            exercises={phase2Exercises}
+            avoid={phase2.avoid}
+            catalog={exerciseCatalog}
+            accentColor={Colors.phase2}
+            expanded={phase2Open}
+            onToggle={() => togglePhase(2)}
+          />
+        ) : null}
+        {hasAnyExercises ? (
+          <PlanPhaseExerciseSection
+            phaseNum={3}
+            title="Phase 3 · Week 4+"
+            phaseGoal={phase3.goal}
+            exercises={phase3Exercises}
+            avoid={phase3.avoid}
+            catalog={exerciseCatalog}
+            accentColor={Colors.phase3}
+            expanded={phase3Open}
+            onToggle={() => togglePhase(3)}
+          />
+        ) : null}
+        </ScreenErrorBoundary>
 
-        {/* Phase Tabs — segmented control */}
-        <View style={styles.phaseTabsContainer}>
-          {PHASE_CONFIGS.map((phase) => (
-            <TouchableOpacity
-              key={phase.key}
-              style={[
-                styles.phaseTab,
-                activePhase === phase.key && [styles.phaseTabActive, { backgroundColor: phase.color }],
-              ]}
-              onPress={() => {
-                setActivePhase(phase.key);
-                setExpandedExercise(null);
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={[
-                styles.phaseTabText,
-                activePhase === phase.key && styles.phaseTabTextActive,
-              ]}>
-                {phase.icon} {phase.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <PlanSafetyHabitsAccordion dailyHabits={plan.daily_habits ?? []} redFlags={plan.red_flags ?? []} />
 
-        {/* Phase Content */}
-        <View style={[styles.phaseCard, { borderTopColor: phaseConfig.color }]}>
-          <View style={styles.phaseCardHeader}>
-            <Text style={[styles.phaseTitle, { color: phaseConfig.color }]}>
-              {phaseConfig.icon} {phaseConfig.label}
-            </Text>
-            <View style={[styles.phaseRangeBadge, { backgroundColor: phaseConfig.color + '20' }]}>
-              <Text style={[styles.phaseRangeText, { color: phaseConfig.color }]}>
-                {phaseConfig.range}
-              </Text>
-            </View>
-          </View>
-
-          {/* Goals */}
-          {phaseData.goal ? (
-            <View style={styles.goalSection}>
-              <Text style={styles.subSectionTitle}>🎯 Goal</Text>
-              <View style={[styles.goalCard, { borderLeftColor: phaseConfig.color }]}>
-                <Text style={styles.goalText}>{phaseData.goal}</Text>
-              </View>
-            </View>
-          ) : null}
-
-          {/* Exercises — expandable cards with checkboxes */}
-          {phaseData.activities?.length > 0 && (
-            <View style={styles.exercisesSection}>
-              <Text style={styles.subSectionTitle}>💪 Exercises</Text>
-              {phaseData.activities.map((exercise, index) => {
-                const exerciseKey = `${activePhase}-${index}`;
-                const isCompleted = completedExercises.has(exerciseKey);
-                return (
-                  <View key={index} style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}>
-                    <TouchableOpacity
-                      style={styles.exerciseHeader}
-                      onPress={() => setExpandedExercise(expandedExercise === index ? null : index)}
-                      activeOpacity={0.8}
-                    >
-                      <TouchableOpacity
-                        style={[styles.checkbox, isCompleted && { backgroundColor: phaseConfig.color, borderColor: phaseConfig.color }]}
-                        onPress={() => toggleExercise(exerciseKey)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        {isCompleted && <Text style={styles.checkboxTick}>✓</Text>}
-                      </TouchableOpacity>
-                      <Text style={[
-                        styles.exerciseName,
-                        isCompleted && styles.exerciseNameCompleted,
-                      ]}>
-                        {exercise}
-                      </Text>
-                      {hasFormCheckVideo(exercise) && (
-                        <TouchableOpacity
-                          style={styles.playDemoBtnInline}
-                          onPress={(e) => {
-                            e?.stopPropagation?.();
-                            const local = getLocalVideoForActivity(exercise);
-                            if (local) {
-                              setPlayingLocalVideo({ source: local.source, title: exercise });
-                            } else {
-                              const apiVideo = getVideoForActivity(exercise);
-                              if (apiVideo?.video_url) Linking.openURL(apiVideo.video_url);
-                            }
-                          }}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Text style={styles.playDemoBtnInlineText}>▶ Play demo</Text>
-                        </TouchableOpacity>
-                      )}
-                      <Text style={styles.exerciseExpandIcon}>
-                        {expandedExercise === index ? '▲' : '▼'}
-                      </Text>
-                    </TouchableOpacity>
-                    {expandedExercise === index && (
-                      <View style={styles.exerciseDetails}>
-                        <Text style={styles.exerciseDetailsText}>
-                          Tap the checkbox when you've completed this exercise. Consistency is key to recovery — aim to complete each exercise every day.
-                        </Text>
-                        {hasFormCheckVideo(exercise) && (
-                          <TouchableOpacity
-                            style={styles.formCheckButton}
-                            onPress={() => {
-                              const local = getLocalVideoForActivity(exercise);
-                              if (local) {
-                                setPlayingLocalVideo({ source: local.source, title: exercise });
-                              } else {
-                                const apiVideo = getVideoForActivity(exercise);
-                                if (apiVideo?.video_url) Linking.openURL(apiVideo.video_url);
-                              }
-                            }}
-                          >
-                            <Text style={styles.formCheckButtonText}>▶ Play form check</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Tips */}
-          {phaseData.avoid?.length > 0 && (
-            <View style={styles.tipsSection}>
-              <Text style={styles.subSectionTitle}>💡 Tips & Precautions</Text>
-              {phaseData.avoid.map((tip, index) => (
-                <View key={index} style={styles.tipItem}>
-                  <View style={[styles.tipDot, { backgroundColor: phaseConfig.color }]} />
-                  <Text style={styles.tipText}>{tip}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Daily Habits */}
-        {plan.daily_habits?.length > 0 && (
-          <View style={[styles.infoCard, styles.habitsCard]}>
-            <Text style={styles.infoCardTitle}>🌱 Daily Habits</Text>
-            {plan.daily_habits.map((habit, index) => (
-              <View key={index} style={styles.bulletItem}>
-                <View style={[styles.bulletDot, { backgroundColor: Colors.success }]} />
-                <Text style={styles.bulletText}>{habit}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Red Flags */}
-        {plan.red_flags?.length > 0 && (
-          <View style={[styles.infoCard, styles.redFlagsCard]}>
-            <Text style={styles.infoCardTitle}>⚠️ Watch For These</Text>
-            <Text style={styles.infoCardSubtitle}>Seek medical attention if you experience:</Text>
-            {plan.red_flags.map((flag, index) => (
-              <View key={index} style={styles.bulletItem}>
-                <View style={[styles.bulletDot, { backgroundColor: Colors.danger }]} />
-                <Text style={styles.bulletText}>{flag}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Pro trial CTA */}
         <TouchableOpacity
           style={styles.trialCta}
           onPress={handleStartTrial}
@@ -362,54 +234,17 @@ export default function RecoveryPlanScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Spacer for FAB */}
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Floating Action Button */}
       <TouchableOpacity
-        style={styles.fab}
+        style={[styles.fab, getShadow('fab')]}
         onPress={handleStartCheckIn}
         activeOpacity={0.85}
       >
         <Text style={styles.fabIcon}>✏️</Text>
         <Text style={styles.fabText}>Start Check-In</Text>
       </TouchableOpacity>
-
-      {/* Local form-check video modal */}
-      <Modal
-        visible={playingLocalVideo !== null}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setPlayingLocalVideo(null)}
-      >
-        <View style={styles.videoModalOverlay}>
-          <View style={styles.videoModalContent}>
-            {playingLocalVideo && (
-              <>
-                <Text style={styles.videoModalTitle} numberOfLines={2}>{playingLocalVideo.title}</Text>
-                <View ref={videoWrapperRef} style={styles.videoPlayerWrapper} collapsable={false}>
-                  <Video
-                    key={playingLocalVideo.title}
-                    source={playingLocalVideo.source}
-                    style={styles.videoModalPlayer}
-                    useNativeControls
-                    resizeMode="contain"
-                    shouldPlay
-                    isLooping={false}
-                  />
-                </View>
-                <TouchableOpacity
-                  style={styles.videoModalClose}
-                  onPress={() => setPlayingLocalVideo(null)}
-                >
-                  <Text style={styles.videoModalCloseText}>Close</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -426,354 +261,85 @@ const styles = StyleSheet.create({
     padding: Spacing.xxl,
     paddingBottom: 40,
   },
-  header: {
-    marginBottom: Spacing.xxl,
+  screenHeader: {
+    marginBottom: Spacing.lg,
   },
-  headerBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.primaryLight,
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    marginBottom: Spacing.md,
-  },
-  headerBadgeText: {
-    fontSize: 13,
+  screenHeaderKicker: {
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginBottom: Spacing.xs,
   },
-  headerTitle: {
-    fontSize: 28,
+  screenHeaderTitle: {
+    fontSize: 22,
     fontWeight: '800',
     color: Colors.textPrimary,
-    marginBottom: 8,
   },
-  headerSubtitle: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    lineHeight: 24,
-  },
-  focusCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.xxl,
-    marginBottom: Spacing.xl,
-  },
-  focusCardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    marginBottom: Spacing.md,
-  },
-  chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  focusChip: {
-    backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.primary + '30',
-  },
-  focusChipText: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  phaseTabsContainer: {
-    flexDirection: 'row',
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    padding: 4,
-    marginBottom: Spacing.xl,
-  },
-  phaseTab: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: Radius.sm,
-    alignItems: 'center',
-  },
-  phaseTabActive: {
-    // color set dynamically
-  },
-  phaseTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-  },
-  phaseTabTextActive: {
-    color: Colors.textInverse,
-  },
-  phaseCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.xxl,
-    marginBottom: Spacing.xl,
-    borderTopWidth: 4,
-  },
-  phaseCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.xl,
-  },
-  phaseTitle: {
-    fontSize: 20,
+  sectionTitle: {
+    fontSize: 18,
     fontWeight: '800',
-  },
-  phaseRangeBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: Radius.full,
-  },
-  phaseRangeText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  goalSection: {
-    marginBottom: Spacing.xl,
-  },
-  subSectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
     color: Colors.textPrimary,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.sm,
   },
-  goalCard: {
-    backgroundColor: Colors.background,
-    borderRadius: Radius.md,
-    padding: Spacing.lg,
-    borderLeftWidth: 3,
-  },
-  goalText: {
-    fontSize: 15,
-    color: Colors.textPrimary,
-    lineHeight: 23,
-  },
-  exercisesSection: {
-    marginBottom: Spacing.xl,
-    gap: Spacing.sm,
-  },
-  exerciseCard: {
-    backgroundColor: Colors.background,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  exerciseCardCompleted: {
-    opacity: 0.7,
-    borderColor: Colors.success + '50',
-  },
-  exerciseHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.lg,
-    gap: Spacing.md,
-    minHeight: 56,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  checkboxTick: {
-    color: Colors.textInverse,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  exerciseName: {
-    flex: 1,
-    fontSize: 15,
-    color: Colors.textPrimary,
-    fontWeight: '500',
-    lineHeight: 22,
-  },
-  exerciseNameCompleted: {
-    textDecorationLine: 'line-through',
-    color: Colors.textMuted,
-  },
-  exerciseExpandIcon: {
-    fontSize: 10,
-    color: Colors.textMuted,
-  },
-  playDemoBtnInline: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    backgroundColor: Colors.primary + '18',
-    marginRight: 8,
-  },
-  playDemoBtnInlineText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  exerciseDetails: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    padding: Spacing.lg,
-    backgroundColor: Colors.surface,
-  },
-  exerciseDetailsText: {
+  sectionSubtitle: {
     fontSize: 14,
     color: Colors.textSecondary,
-    lineHeight: 22,
+    lineHeight: 21,
+    marginBottom: Spacing.lg,
   },
-  tipsSection: {
-    gap: Spacing.sm,
-  },
-  tipItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.md,
-    paddingVertical: 4,
-  },
-  tipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 7,
-    flexShrink: 0,
-  },
-  tipText: {
-    flex: 1,
-    fontSize: 15,
-    color: Colors.textPrimary,
-    lineHeight: 23,
-  },
-  infoCard: {
-    backgroundColor: Colors.surface,
+  startPhaseCta: {
+    backgroundColor: Colors.primary,
     borderRadius: Radius.lg,
-    padding: Spacing.xxl,
-    marginBottom: Spacing.xl,
-    borderLeftWidth: 4,
+    paddingVertical: Spacing.xl,
+    paddingHorizontal: Spacing.xxl,
+    marginBottom: Spacing.lg,
+    alignItems: 'center',
   },
-  habitsCard: {
-    borderLeftColor: Colors.success,
+  startPhaseCtaTitle: {
+    color: Colors.textInverse,
+    fontSize: 19,
+    fontWeight: '800',
   },
-  redFlagsCard: {
-    borderLeftColor: Colors.danger,
-  },
-  infoCardTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    marginBottom: 8,
-  },
-  infoCardSubtitle: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.md,
-  },
-  bulletItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.md,
-    marginBottom: 10,
-  },
-  bulletDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 7,
-    flexShrink: 0,
-  },
-  bulletText: {
-    flex: 1,
-    fontSize: 15,
-    color: Colors.textPrimary,
-    lineHeight: 23,
+  startPhaseCtaSub: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 14,
+    marginTop: Spacing.xs,
+    fontWeight: '500',
   },
   trialCta: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    marginTop: Spacing.lg,
     paddingVertical: Spacing.lg,
-    marginBottom: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    alignItems: 'center',
   },
   trialCtaText: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: Colors.primary,
-  },
-  formCheckButton: {
-    marginTop: Spacing.md,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.primaryLight,
-    borderRadius: Radius.sm,
-  },
-  formCheckButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.primaryDark,
   },
   fab: {
     position: 'absolute',
     bottom: 32,
-    right: 24,
-    backgroundColor: Colors.secondary,
+    right: Spacing.xxl,
+    backgroundColor: Colors.primary,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
     borderRadius: Radius.full,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
+    gap: 8,
   },
   fabIcon: {
     fontSize: 18,
   },
   fabText: {
     color: Colors.textInverse,
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  videoModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    padding: Spacing.lg,
-  },
-  videoModalContent: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-  },
-  videoModalTitle: {
-    padding: Spacing.md,
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.textPrimary,
-  },
-  videoPlayerWrapper: {
-    width: '100%',
-    height: 240,
-    backgroundColor: '#000',
-    borderRadius: 8,
-    marginBottom: Spacing.md,
-    overflow: 'hidden',
-  },
-  videoModalPlayer: {
-    width: '100%',
-    height: '100%',
-  },
-  videoModalClose: {
-    padding: Spacing.lg,
-    alignItems: 'center',
-  },
-  videoModalCloseText: {
     fontSize: 16,
     fontWeight: '700',
-    color: Colors.primary,
   },
 });

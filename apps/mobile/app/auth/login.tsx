@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth-context';
+import { sendPasswordResetEmail } from '../../lib/auth';
 import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
 
 export default function LoginScreen() {
@@ -13,6 +14,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetSending, setResetSending] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -47,6 +49,30 @@ export default function LoginScreen() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert('Email required', 'Enter the email you use for Rejuuv, then tap Reset password.');
+      return;
+    }
+    setResetSending(true);
+    try {
+      const { error } = await sendPasswordResetEmail(email.trim());
+      if (error) {
+        Alert.alert('Could not send reset email', error.message || 'Try again in a few minutes.');
+        return;
+      }
+      Alert.alert(
+        'Check your inbox',
+        'If an account exists for that email, you will receive a link to reset your password. Open it on this device so Rejuuv can sign you in.',
+        [{ text: 'OK' }]
+      );
+    } catch (e: unknown) {
+      Alert.alert('Could not send reset email', e instanceof Error ? e.message : 'Please try again.');
+    } finally {
+      setResetSending(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -68,8 +94,21 @@ export default function LoginScreen() {
             <Text style={styles.inputLabel}>Password</Text>
             <TextInput style={[styles.input, passwordFocused && styles.inputFocused]} placeholder="Your password" placeholderTextColor={Colors.textMuted} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} editable={!loading} onFocus={() => setPasswordFocused(true)} onBlur={() => setPasswordFocused(false)} />
           </View>
-          <TouchableOpacity style={[styles.loginButton, loading && styles.loginButtonDisabled]} onPress={handleLogin} disabled={loading} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
             {loading ? <ActivityIndicator color={Colors.textInverse} /> : <Text style={styles.loginButtonText}>Log In</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.forgotBtn}
+            onPress={() => void handleForgotPassword()}
+            disabled={loading || resetSending}
+            hitSlop={8}
+          >
+            <Text style={styles.forgotText}>{resetSending ? 'Sending…' : 'Forgot password?'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.signUpLink} onPress={() => router.push('/auth/signup')} disabled={loading} activeOpacity={0.7}>
             <Text style={styles.signUpLinkText}>Don't have an account? <Text style={styles.signUpLinkBold}>Create one free</Text></Text>
@@ -96,6 +135,8 @@ const styles = StyleSheet.create({
   loginButton: { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 18, alignItems: 'center', justifyContent: 'center', marginTop: 8, marginBottom: 24 },
   loginButtonDisabled: { backgroundColor: Colors.textMuted },
   loginButtonText: { color: Colors.textInverse, fontSize: 17, fontWeight: '700', letterSpacing: 0.5 },
+  forgotBtn: { alignSelf: 'center', paddingVertical: 14, marginBottom: 8 },
+  forgotText: { fontSize: 15, fontWeight: '600', color: Colors.primary },
   signUpLink: { alignItems: 'center', paddingVertical: Spacing.md },
   signUpLinkText: { color: Colors.textSecondary, fontSize: 15 },
   signUpLinkBold: { color: Colors.primary, fontWeight: '700' },

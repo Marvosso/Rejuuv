@@ -10,7 +10,9 @@ import {
   ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { getSession } from '../../lib/auth';
+import { submitCheckInWithOfflineQueue } from '../../lib/check-in-outbox';
+import { apiFetchJson } from '../../lib/api-fetch';
+import { pickPrimaryPlan } from '../../lib/daily-win-notifications';
 import { Colors, Spacing, Radius, getShadow } from '../../lib/theme';
 
 const PAIN_CHANGE_OPTIONS = [
@@ -55,20 +57,11 @@ export default function QuickCheckInScreen() {
   useEffect(() => {
     const loadPlans = async () => {
       try {
-        const session = await getSession();
-        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-        const response = await fetch(`${apiUrl}/plans`, {
-          headers: {
-            'Content-Type': 'application/json',
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
-        });
-        if (!response.ok) throw new Error('Failed to load plans');
-        const data = await response.json();
-        const plans = data.plans ?? [];
-        if (plans.length > 0) {
-          setPlanId(plans[0].id);
-        }
+        const result = await apiFetchJson<{ plans?: { id: string }[] }>('/plans');
+        if (!result.ok) throw new Error(result.message);
+        const plans = result.data.plans ?? [];
+        const primary = pickPrimaryPlan(plans);
+        if (primary) setPlanId(primary.id);
       } catch {
         setPlanId(null);
       } finally {
@@ -83,33 +76,35 @@ export default function QuickCheckInScreen() {
       Alert.alert(
         'No plan yet',
         'Create a recovery plan first, then you can log quick check-ins.',
-        [{ text: 'OK' }, { text: 'Create plan', onPress: () => router.replace('/intake/body-area') }]
+        [{ text: 'OK' }, { text: 'Create plan', onPress: () => router.replace('/intake/body-area?reset=1') }]
       );
       return;
     }
     setSubmitting(true);
     try {
-      const session = await getSession();
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-      const response = await fetch(`${apiUrl}/check-ins`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          quick: true,
-          pain_level: painLevel,
-          pain_change: painChange,
-          recovery_plan_id: planId,
-          ...(notes.trim() ? { notes: notes.trim() } : {}),
-        }),
+      const out = await submitCheckInWithOfflineQueue({
+        quick: true,
+        pain_level: painLevel,
+        pain_change: painChange,
+        recovery_plan_id: planId,
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
-      if (!response.ok) throw new Error('Failed to save');
-      // #region agent log
-      const canGoBack = router.canGoBack();
-      fetch('http://127.0.0.1:7889/ingest/a2a93dc1-6ddc-4917-a00c-d8dc1a903f11',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c1e4e7'},body:JSON.stringify({sessionId:'c1e4e7',location:'check-in/quick.tsx:after_submit',message:'GO_BACK after submit',data:{canGoBack,action:'router.back()'},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
+      if (out.kind === 'error') {
+        if (out.unauthorized) {
+          Alert.alert('Session expired', 'Please sign in again to continue.');
+        } else {
+          Alert.alert('Could not save', out.message);
+        }
+        return;
+      }
+      if (out.kind === 'queued') {
+        Alert.alert(
+          'Saved on this device',
+          'Your check-in is safe here. We will send it when your connection is stable again.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+        return;
+      }
       router.back();
     } catch {
       Alert.alert('Error', 'Failed to save check-in. Please try again.');
@@ -134,13 +129,7 @@ export default function QuickCheckInScreen() {
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => {
-            // #region agent log
-            const canGoBack = router.canGoBack();
-            fetch('http://127.0.0.1:7889/ingest/a2a93dc1-6ddc-4917-a00c-d8dc1a903f11',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c1e4e7'},body:JSON.stringify({sessionId:'c1e4e7',location:'check-in/quick.tsx:back_button',message:'GO_BACK from Back button',data:{canGoBack,action:'router.back()'},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-            // #endregion
-            router.back();
-          }}
+          onPress={() => router.back()}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
           <Text style={styles.backBtnText}>← Back</Text>
@@ -251,7 +240,7 @@ export default function QuickCheckInScreen() {
       </TouchableOpacity>
 
       {!planId && !loadingPlans && (
-        <TouchableOpacity style={styles.link} onPress={() => router.replace('/intake/body-area')}>
+        <TouchableOpacity style={styles.link} onPress={() => router.replace('/intake/body-area?reset=1')}>
           <Text style={styles.linkText}>Create a recovery plan first</Text>
         </TouchableOpacity>
       )}

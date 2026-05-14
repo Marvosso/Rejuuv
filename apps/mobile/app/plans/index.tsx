@@ -13,8 +13,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Svg, { Circle } from 'react-native-svg';
-import { getSession } from '../../lib/auth';
+import { apiFetch, apiFetchJson } from '../../lib/api-fetch';
 import { Colors, Spacing, Radius } from '../../lib/theme';
+import { normalizePhaseExercises } from '../../lib/recovery-plan-phase';
 
 interface Plan {
   id: string;
@@ -61,8 +62,8 @@ function getNextStepLabel(plan: Plan): string {
         : plan.phase === 2
           ? 'phase_2_days_8_to_21'
           : 'phase_3_week_4_and_beyond';
-    const activities = phases[phaseKey]?.activities;
-    const first = Array.isArray(activities) ? activities[0] : null;
+    const list = normalizePhaseExercises(phases[phaseKey]);
+    const first = list[0]?.name;
     if (first) return `Next: ${first}`;
   } catch {
     // ignore
@@ -127,17 +128,9 @@ export default function PlansListScreen() {
   const fetchPlans = useCallback(async () => {
     try {
       setError(null);
-      const session = await getSession();
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-      const response = await fetch(`${apiUrl}/plans`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-      });
-      if (!response.ok) throw new Error('Failed to load plans');
-      const data = await response.json();
-      setPlans(data.plans ?? []);
+      const result = await apiFetchJson<{ plans?: Plan[] }>('/plans');
+      if (!result.ok) throw new Error(result.message);
+      setPlans(result.data.plans ?? []);
     } catch (err) {
       setError('Could not load your plans. Pull down to retry.');
     } finally {
@@ -166,16 +159,8 @@ export default function PlansListScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const session = await getSession();
-              const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-              const response = await fetch(`${apiUrl}/plans/${plan.id}`, {
-                method: 'DELETE',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-                },
-              });
-              if (!response.ok) throw new Error('Failed to delete plan');
+              const res = await apiFetch(`/plans/${plan.id}`, { method: 'DELETE' });
+              if (!res.ok) throw new Error('Failed to delete plan');
               setPlans((prev) => prev.filter((p) => p.id !== plan.id));
             } catch {
               Alert.alert('Error', 'Could not delete the plan. Please try again.');
@@ -201,8 +186,6 @@ export default function PlansListScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => {
-            const canGoBack = router.canGoBack();
-            fetch('http://127.0.0.1:7889/ingest/a2a93dc1-6ddc-4917-a00c-d8dc1a903f11',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c1e4e7'},body:JSON.stringify({sessionId:'c1e4e7',location:'plans/index.tsx:backBtn',message:'GO_BACK from plans list',data:{canGoBack},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
             router.back();
           }}
           style={styles.backBtn}
@@ -238,7 +221,7 @@ export default function PlansListScreen() {
             </Text>
             <TouchableOpacity
               style={styles.startButton}
-              onPress={() => router.push('/intake/body-area')}
+              onPress={() => router.push('/intake/body-area?reset=1')}
               activeOpacity={0.85}
             >
               <Text style={styles.startButtonText}>Start First Assessment</Text>

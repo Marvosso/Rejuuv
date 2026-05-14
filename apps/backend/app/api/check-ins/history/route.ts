@@ -1,15 +1,26 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/db';
 import { getUserIdFromRequest } from '../../../../lib/auth';
+import { enforceRateLimit } from '../../../../lib/rate-limit';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  apiFailureFromException,
+  logApiRouteFailure,
+} from '../../../../lib/api-errors';
 
 export async function GET(request: Request) {
   try {
     const user_id = await getUserIdFromRequest(request);
     if (!user_id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiFailure(API_ERROR_CODES.UNAUTHORIZED, 'Unauthorized', 401, false);
     }
 
-    // Fetch the last 90 days of check-ins for this user
+    const limited = await enforceRateLimit(user_id, 'GET /check-ins/history');
+    if (!limited.ok) {
+      return limited.response;
+    }
+
     const since = new Date();
     since.setDate(since.getDate() - 90);
 
@@ -21,47 +32,60 @@ export async function GET(request: Request) {
       .order('created_at', { ascending: true });
 
     if (error) {
-      console.error('Failed to fetch check-in history:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch check-in history' },
-        { status: 500 }
+      logApiRouteFailure('GET /api/check-ins/history', new Error(error.message), {
+        supabase_code: error.code,
+      });
+      return apiFailure(
+        API_ERROR_CODES.INTERNAL_ERROR,
+        'Failed to fetch check-in history. Please try again.',
+        500,
+        true
       );
     }
 
     const rows = checkIns ?? [];
 
-    // Compute streak: consecutive days (by date) with at least one check-in, ending today or yesterday
+    const utcDayKey = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    };
+
     const dateSet = new Set<string>();
     for (const r of rows) {
-      const d = new Date(r.created_at);
-      dateSet.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`);
+      dateSet.add(utcDayKey(r.created_at));
     }
+
     let streakDays = 0;
-    const today = new Date();
-    for (let i = 0; i < 365; i++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-      if (dateSet.has(key)) {
+    const now = new Date();
+    const todayKey = utcDayKey(now.toISOString());
+    const yest = new Date(now);
+    yest.setUTCDate(yest.getUTCDate() - 1);
+    const yesterdayKey = utcDayKey(yest.toISOString());
+
+    if (dateSet.has(todayKey) || dateSet.has(yesterdayKey)) {
+      const cursor = new Date(now);
+      cursor.setUTCHours(0, 0, 0, 0);
+      if (!dateSet.has(todayKey)) {
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+      }
+      for (;;) {
+        const k = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}-${String(cursor.getUTCDate()).padStart(2, '0')}`;
+        if (!dateSet.has(k)) break;
         streakDays++;
-      } else {
-        break;
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
       }
     }
 
-    // Compute summary stats
     const total = rows.length;
     const levelsWithData = rows.filter((r) => r.pain_level !== null);
     const avgPain =
       levelsWithData.length > 0
         ? Math.round(
-            (levelsWithData.reduce((sum, r) => sum + (r.pain_level ?? 0), 0) /
-              levelsWithData.length) *
+            (levelsWithData.reduce((sum, r) => sum + (r.pain_level ?? 0), 0) / levelsWithData.length) *
               10
           ) / 10
         : null;
 
-    // Trend: compare first half avg vs second half avg
     let trend: 'improving' | 'stable' | 'worsening' = 'stable';
     if (levelsWithData.length >= 4) {
       const mid = Math.floor(levelsWithData.length / 2);
@@ -76,7 +100,6 @@ export async function GET(request: Request) {
       else if (diff > 0.5) trend = 'worsening';
     }
 
-    // Build per-plan grouped data so the client can filter by area
     const byPlan: Record<string, typeof rows> = {};
     for (const row of rows) {
       const key = row.recovery_plan_id ?? 'unknown';
@@ -93,12 +116,6 @@ export async function GET(request: Request) {
       { status: 200 }
     );
   } catch (error) {
-    console.error('Error in GET /api/check-ins/history:', error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'An unknown error occurred',
-      },
-      { status: 500 }
-    );
+    return apiFailureFromException('GET /api/check-ins/history', error);
   }
 }

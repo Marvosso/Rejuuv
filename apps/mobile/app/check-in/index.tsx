@@ -10,7 +10,9 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { getSession } from '../../lib/auth';
+import { tryParseJson } from '../../lib/safe-json';
+import { submitCheckInWithOfflineQueue } from '../../lib/check-in-outbox';
+import { normalizePhaseExercises } from '../../lib/recovery-plan-phase';
 import { Colors, Spacing, Radius, getShadow } from '../../lib/theme';
 
 const PAIN_CHANGE_OPTIONS = [
@@ -52,14 +54,18 @@ export default function CheckInScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  const recovery_plan = params.recovery_plan
-    ? JSON.parse(params.recovery_plan as string)
-    : null;
+  const recovery_plan = (() => {
+    const raw = params.recovery_plan;
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    const parsed = tryParseJson<Record<string, unknown>>(raw);
+    return parsed.ok ? parsed.data : null;
+  })();
 
   const plan_id = (params.plan_id as string) || null;
 
-  const exercises: string[] =
-    recovery_plan?.recovery_plan?.phase_1_days_1_to_7?.activities ?? [];
+  const exercises: string[] = normalizePhaseExercises(
+    recovery_plan?.recovery_plan?.phase_1_days_1_to_7
+  ).map((e) => e.name);
 
   const [painChange, setPainChange] = useState('');
   const [painLevel, setPainLevel] = useState(0);
@@ -69,6 +75,7 @@ export default function CheckInScreen() {
   const [loading, setLoading] = useState(false);
   const [notesFocused, setNotesFocused] = useState(false);
   const [notesExpanded, setNotesExpanded] = useState(false);
+  const [continuityNote, setContinuityNote] = useState<string | null>(null);
 
   const toggleActivity = (exercise: string) => {
     setCompletedActivities((prev) =>
@@ -81,33 +88,43 @@ export default function CheckInScreen() {
       Alert.alert('Incomplete', 'Please complete all required sections before submitting.');
       return;
     }
+    if (!plan_id) {
+      Alert.alert('Missing plan', 'Open this check-in from your plan so we can attach it correctly.');
+      return;
+    }
 
     setLoading(true);
+    setContinuityNote(null);
     try {
-      const session = await getSession();
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/check-ins`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          pain_change: painChange,
-          pain_level: painLevel,
-          difficulty,
-          completed_activities: completedActivities,
-          notes,
-          current_plan: recovery_plan,
-          recovery_plan_id: plan_id,
-        }),
+      const out = await submitCheckInWithOfflineQueue({
+        pain_change: painChange,
+        pain_level: painLevel,
+        difficulty,
+        completed_activities: completedActivities,
+        notes,
+        current_plan: recovery_plan,
+        recovery_plan_id: plan_id,
       });
 
-      if (!response.ok) throw new Error('Server error');
+      if (out.kind === 'error') {
+        if (out.unauthorized) {
+          Alert.alert('Session expired', 'Please sign in again, then try your check-in.');
+        } else {
+          Alert.alert('Could not save', out.message);
+        }
+        return;
+      }
 
-      const data = await response.json();
-      router.push({ pathname: '/check-in/results', params: { results: JSON.stringify(data) } });
-    } catch (err) {
-      Alert.alert('Error', 'Failed to submit check-in. Please try again.');
+      if (out.kind === 'queued') {
+        setContinuityNote(
+          'Saved on this device. Nothing is lost — we will send this check-in when your connection is stable again.'
+        );
+        return;
+      }
+
+      router.push({ pathname: '/check-in/results', params: { results: JSON.stringify(out.data) } });
+    } catch {
+      Alert.alert('Error', 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -118,6 +135,22 @@ export default function CheckInScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.heading}>Daily Check-In ✏️</Text>
         <Text style={styles.subheading}>How's your recovery going today?</Text>
+
+        {continuityNote ? (
+          <View style={styles.continuityCard} accessibilityRole="summary">
+            <Text style={styles.continuityTitle}>Saved locally</Text>
+            <Text style={styles.continuityBody}>{continuityNote}</Text>
+            <Text style={styles.continuityHint}>You can leave this screen — your entry stays on your phone until it syncs.</Text>
+            <TouchableOpacity
+              style={styles.continuityBtn}
+              onPress={() => router.replace('/')}
+              accessibilityRole="button"
+              accessibilityLabel="Go to home"
+            >
+              <Text style={styles.continuityBtnText}>Go to home</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {/* Section 1: Pain change — toggle group */}
         <View style={styles.card}>
@@ -518,5 +551,43 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  continuityCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xl,
+    marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  continuityTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
+  },
+  continuityBody: {
+    fontSize: 15,
+    color: Colors.textSecondary,
+    lineHeight: 22,
+    marginBottom: Spacing.sm,
+  },
+  continuityHint: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    lineHeight: 18,
+    marginBottom: Spacing.lg,
+  },
+  continuityBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primary,
+    paddingVertical: Spacing.sm + 2,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: Radius.md,
+  },
+  continuityBtnText: {
+    color: Colors.textInverse,
+    fontWeight: '600',
+    fontSize: 15,
   },
 });

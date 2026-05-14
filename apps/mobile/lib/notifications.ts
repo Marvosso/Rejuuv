@@ -1,7 +1,8 @@
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { getSession } from './auth';
+import { apiFetch } from './api-fetch';
+import { getAccessTokenForApi } from './auth';
 
 const easProjectId =
   (process.env.EXPO_PUBLIC_PROJECT_ID as string | undefined) ||
@@ -29,16 +30,11 @@ export async function registerPushToken(): Promise<void> {
     const token = tokenData?.data;
     if (!token) return;
 
-    const session = await getSession();
-    if (!session?.access_token) return;
+    const access = await getAccessTokenForApi();
+    if (!access) return;
 
-    const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-    await fetch(`${apiUrl}/users/push-token`, {
+    await apiFetch('/users/push-token', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
       body: JSON.stringify({ token }),
     });
   } catch (err) {

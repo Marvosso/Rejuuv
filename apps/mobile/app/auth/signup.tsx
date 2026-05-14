@@ -157,7 +157,11 @@ export default function SignUpScreen() {
         </Animated.View>
 
         <Text style={styles.termsText}>
-          By creating an account, you agree to our Terms of Service and Privacy Policy.
+          By creating an account, you agree to our Terms of Service. View the{' '}
+          <Text style={styles.termsLink} onPress={() => router.push('/legal/privacy')}>
+            beta privacy summary
+          </Text>
+          .
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -302,5 +306,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xxl,
     lineHeight: 18,
     marginBottom: Spacing.xxl,
+  },
+  termsLink: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });

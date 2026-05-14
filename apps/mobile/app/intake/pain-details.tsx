@@ -48,7 +48,7 @@ export default function PainDetailsScreen() {
       pain_level: painLevel.toString(),
       movement_limitations: encodeURIComponent(JSON.stringify(movementLimitations)),
     });
-    router.push(`/intake/review?${params.toString()}`);
+    router.push(`/intake/review-legacy?${params.toString()}`);
   };
 
   const painColor = getPainColor(painLevel);

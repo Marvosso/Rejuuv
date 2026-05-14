@@ -1,13 +1,10 @@
-import { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-} from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Colors, Spacing, Radius } from '../../lib/theme';
+import { useIntakeWizard } from '../../lib/intake-wizard-context';
+import { microInsightForPainBand } from '../../lib/intake-micro-insights';
+import { IntakeProgressHeader, IntakeMicroInsight } from '../../components/intake';
 
 const PAIN_EMOJIS = ['', '😊', '🙂', '😐', '😕', '😟', '😣', '😢', '😭', '😫', '🤯'];
 
@@ -19,44 +16,30 @@ const getPainColor = (level: number): string => {
 
 export default function PainLevelScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
-  const bodyArea = (params.body_area as string) || '';
-  const triggerParam = params.trigger as string | undefined;
-  const trigger = triggerParam
-    ? (typeof triggerParam === 'string'
-        ? JSON.parse(decodeURIComponent(triggerParam))
-        : triggerParam) as string[]
-    : [];
+  const { painLevel: ctxPain, setPainLevel } = useIntakeWizard();
+  const [painLevel, setLocal] = useState(ctxPain || 5);
 
-  const [painLevel, setPainLevel] = useState(5);
+  useEffect(() => {
+    setLocal(ctxPain);
+  }, [ctxPain]);
+
   const painColor = getPainColor(painLevel);
+  const insight = microInsightForPainBand(painLevel);
 
   const handleContinue = () => {
-    const params = new URLSearchParams({
-      body_area: bodyArea,
-      pain_level: painLevel.toString(),
-    });
-    if (trigger.length > 0) {
-      params.set('trigger', encodeURIComponent(JSON.stringify(trigger)));
-    }
-    router.push(`/intake/aggravators?${params.toString()}`);
+    setPainLevel(painLevel);
+    router.push('/intake/profile');
   };
 
   return (
     <View style={styles.container}>
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: '50%' }]} />
-      </View>
-      <View style={styles.topBar}>
-        <Text style={styles.progressLabel}>Step 2 of 4</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>← Back</Text>
-        </TouchableOpacity>
-      </View>
+      <IntakeProgressHeader currentStep={2} onBack={() => router.back()} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>How bad is it right now?</Text>
-        <Text style={styles.subtitle}>Rate your pain from 1 (mild) to 10 (severe)</Text>
+        <Text style={styles.title}>How intense is it right now?</Text>
+        <Text style={styles.subtitle}>1 is mild, 10 is the worst you can imagine. Tap a number.</Text>
+
+        {insight ? <IntakeMicroInsight message={insight} /> : null}
 
         <View style={styles.sliderSection}>
           <View style={styles.painLevelDisplay}>
@@ -76,7 +59,7 @@ export default function PainLevelScreen() {
                     { backgroundColor: isActive ? lvlColor : Colors.inputBg },
                     painLevel === level && styles.painDotActive,
                   ]}
-                  onPress={() => setPainLevel(level)}
+                  onPress={() => setLocal(level)}
                 >
                   <Text
                     style={[
@@ -112,38 +95,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  progressBar: {
-    height: 4,
-    backgroundColor: Colors.border,
-  },
-  progressFill: {
-    height: 4,
-    backgroundColor: Colors.primary,
-    borderRadius: 2,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xxl,
-    paddingVertical: Spacing.sm,
-  },
-  progressLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  backBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  backBtnText: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    fontWeight: '500',
-  },
   scrollContent: {
     padding: Spacing.xxl,
     paddingBottom: 120,
@@ -158,13 +109,14 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: Colors.textSecondary,
-    marginBottom: Spacing.xxl,
+    marginBottom: Spacing.lg,
     lineHeight: 24,
   },
   sliderSection: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
     padding: Spacing.xl,
+    marginTop: Spacing.sm,
   },
   painLevelDisplay: {
     flexDirection: 'row',

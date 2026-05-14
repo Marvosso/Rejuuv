@@ -1,103 +1,68 @@
-import { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-} from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Colors, Spacing, Radius } from '../../lib/theme';
-
-const AGGRAVATOR_OPTIONS = [
-  'Sitting long periods',
-  'Morning stiffness',
-  'After exercise',
-];
+import { INTAKE_AGGRAVATOR_OPTIONS } from '../../lib/intake-aggravator-options';
+import { useIntakeWizard } from '../../lib/intake-wizard-context';
+import { IntakeProgressHeader, AggravatorCheckboxRow } from '../../components/intake';
 
 export default function AggravatorsScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
-  const bodyArea = (params.body_area as string) || '';
-  const painLevel = (params.pain_level as string) || '5';
-  const triggerParam = params.trigger as string | undefined;
-  const existingTrigger = triggerParam
-    ? (typeof triggerParam === 'string'
-        ? JSON.parse(decodeURIComponent(triggerParam))
-        : triggerParam) as string[]
-    : [];
+  const {
+    aggravators,
+    toggleAggravator,
+    customTriggerLine,
+    setCustomTriggerLine,
+  } = useIntakeWizard();
+  const [other, setOther] = useState(customTriggerLine);
 
-  const [selected, setSelected] = useState<string[]>(existingTrigger);
-  const [otherText, setOtherText] = useState('');
-
-  const toggle = (option: string) => {
-    setSelected((prev) =>
-      prev.includes(option) ? prev.filter((s) => s !== option) : [...prev, option]
-    );
-  };
+  useEffect(() => {
+    setOther(customTriggerLine);
+  }, [customTriggerLine]);
 
   const handleContinue = () => {
-    const trigger = otherText.trim()
-      ? [...selected, otherText.trim()]
-      : selected;
-    const params = new URLSearchParams({
-      body_area: bodyArea,
-      pain_level: painLevel,
-      trigger: encodeURIComponent(JSON.stringify(trigger)),
-    });
-    router.push(`/intake/tell-more?${params.toString()}`);
+    setCustomTriggerLine(other.trim());
+    router.push('/intake/summary');
+  };
+
+  const handleSkip = () => {
+    setCustomTriggerLine(other.trim());
+    router.push('/intake/summary');
   };
 
   return (
     <View style={styles.container}>
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: '75%' }]} />
-      </View>
-      <View style={styles.topBar}>
-        <Text style={styles.progressLabel}>Step 3 of 4</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>← Back</Text>
-        </TouchableOpacity>
-      </View>
+      <IntakeProgressHeader currentStep={4} onBack={() => router.back()} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>What makes it worse?</Text>
-        <Text style={styles.subtitle}>Tap all that apply (optional)</Text>
+        <Text style={styles.title}>What tends to stir it up?</Text>
+        <Text style={styles.subtitle}>Optional — select any that apply. You can skip.</Text>
 
-        <View style={styles.chipRow}>
-          {AGGRAVATOR_OPTIONS.map((option) => {
-            const isSelected = selected.includes(option);
-            return (
-              <TouchableOpacity
-                key={option}
-                style={[styles.chip, isSelected && styles.chipSelected]}
-                onPress={() => toggle(option)}
-                activeOpacity={0.75}
-              >
-                <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
-                  {option}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <View style={styles.otherSection}>
-          <Text style={styles.otherLabel}>Other (optional)</Text>
-          <TextInput
-            style={styles.otherInput}
-            placeholder="e.g. Lifting, driving..."
-            placeholderTextColor={Colors.textMuted}
-            value={otherText}
-            onChangeText={setOtherText}
+        {INTAKE_AGGRAVATOR_OPTIONS.map((option) => (
+          <AggravatorCheckboxRow
+            key={option}
+            label={option}
+            checked={aggravators.includes(option)}
+            onToggle={() => toggleAggravator(option)}
           />
-        </View>
+        ))}
+
+        <Text style={styles.otherLabel}>Other</Text>
+        <TextInput
+          style={styles.otherInput}
+          placeholder="e.g. Specific sport, job task…"
+          placeholderTextColor={Colors.textMuted}
+          value={other}
+          onChangeText={setOther}
+        />
       </ScrollView>
 
       <View style={styles.footer}>
+        <TouchableOpacity style={styles.skipBtn} onPress={handleSkip} activeOpacity={0.85}>
+          <Text style={styles.skipBtnText}>Skip</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.continueButton} onPress={handleContinue} activeOpacity={0.85}>
-          <Text style={styles.continueButtonText}>Continue</Text>
+          <Text style={styles.continueButtonText}>See summary</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -109,41 +74,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  progressBar: {
-    height: 4,
-    backgroundColor: Colors.border,
-  },
-  progressFill: {
-    height: 4,
-    backgroundColor: Colors.primary,
-    borderRadius: 2,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xxl,
-    paddingVertical: Spacing.sm,
-  },
-  progressLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  backBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  backBtnText: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    fontWeight: '500',
-  },
   scrollContent: {
     padding: Spacing.xxl,
-    paddingBottom: 120,
+    paddingBottom: 130,
   },
   title: {
     fontSize: 28,
@@ -155,70 +88,59 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: Colors.textSecondary,
-    marginBottom: Spacing.xxl,
+    marginBottom: Spacing.xl,
     lineHeight: 24,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.md,
-    marginBottom: Spacing.xxl,
-  },
-  chip: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.inputBg,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  chipSelected: {
-    backgroundColor: Colors.primaryLight,
-    borderColor: Colors.primary,
-  },
-  chipText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.textPrimary,
-  },
-  chipTextSelected: {
-    color: Colors.primaryDark,
-  },
-  otherSection: {
-    marginTop: Spacing.lg,
   },
   otherLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.textSecondary,
+    marginTop: Spacing.lg,
     marginBottom: Spacing.sm,
   },
   otherInput: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    fontSize: 16,
-    color: Colors.textPrimary,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderRadius: Radius.md,
+    padding: Spacing.lg,
+    fontSize: 16,
+    color: Colors.textPrimary,
   },
   footer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    flexDirection: 'row',
+    gap: Spacing.md,
     padding: Spacing.xxl,
     paddingBottom: 40,
     backgroundColor: Colors.surface,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
+  skipBtn: {
+    flex: 1,
+    paddingVertical: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  skipBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
   continueButton: {
+    flex: 2,
     backgroundColor: Colors.primary,
     borderRadius: Radius.md,
     paddingVertical: 18,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   continueButtonText: {
     color: Colors.textInverse,

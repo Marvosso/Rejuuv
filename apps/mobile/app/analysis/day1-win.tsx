@@ -31,6 +31,8 @@ export default function Day1WinScreen() {
   const bodyArea = (params.body_area as string) || '';
   const analysisParam = params.analysis as string | undefined;
   const intakeDataParam = params.intakeData as string | undefined;
+  const assessmentIdParam =
+    typeof params.assessment_id === 'string' ? params.assessment_id : undefined;
 
   const areaLabel = BODY_AREA_LABELS[bodyArea] || bodyArea.replace(/_/g, ' ');
 
@@ -38,6 +40,7 @@ export default function Day1WinScreen() {
     const query: Record<string, string> = {};
     if (analysisParam) query.analysis = analysisParam;
     if (intakeDataParam) query.intakeData = intakeDataParam;
+    if (assessmentIdParam) query.assessment_id = assessmentIdParam;
     router.push({
       pathname: '/analysis/results',
       params: query,

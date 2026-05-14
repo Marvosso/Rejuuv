@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../lib/db';
 import { getUserIdFromRequest } from '../../../lib/auth';
+import { enforceRateLimit } from '../../../lib/rate-limit';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  apiFailureFromException,
+  logApiRouteFailure,
+} from '../../../lib/api-errors';
 
 /**
  * GET /api/exercise-videos
@@ -10,7 +17,12 @@ export async function GET(request: Request) {
   try {
     const user_id = await getUserIdFromRequest(request);
     if (!user_id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiFailure(API_ERROR_CODES.UNAUTHORIZED, 'Unauthorized', 401, false);
+    }
+
+    const limited = await enforceRateLimit(user_id, 'GET /exercise-videos');
+    if (!limited.ok) {
+      return limited.response;
     }
 
     const { searchParams } = new URL(request.url);
@@ -27,21 +39,19 @@ export async function GET(request: Request) {
     const { data: rows, error } = await query.order('exercise_key');
 
     if (error) {
-      console.error('Failed to fetch exercise videos:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch exercise videos' },
-        { status: 500 }
+      logApiRouteFailure('GET /api/exercise-videos', new Error(error.message), {
+        supabase_code: error.code,
+      });
+      return apiFailure(
+        API_ERROR_CODES.INTERNAL_ERROR,
+        'Failed to fetch exercise videos. Please try again.',
+        500,
+        true
       );
     }
 
     return NextResponse.json({ videos: rows ?? [] }, { status: 200 });
   } catch (error) {
-    console.error('Error in GET /api/exercise-videos:', error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'An unknown error occurred',
-      },
-      { status: 500 }
-    );
+    return apiFailureFromException('GET /api/exercise-videos', error);
   }
 }

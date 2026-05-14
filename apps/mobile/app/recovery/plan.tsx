@@ -1,9 +1,12 @@
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { normalizePhaseExercises } from '../../lib/recovery-plan-phase';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
 
 interface RecoveryPhase {
   goal: string;
-  activities: string[];
+  activities?: string[];
+  exercises?: { name: string; sets_reps?: string; why_this_helps?: string; form_tips?: string[] }[];
   avoid: string[];
 }
 
@@ -27,9 +30,9 @@ export default function RecoveryPlanScreen() {
   let plan: RecoveryPlanData = {
     focus_areas: [],
     recovery_plan: {
-      phase_1_days_1_to_7: { goal: '', activities: [], avoid: [] },
-      phase_2_days_8_to_21: { goal: '', activities: [], avoid: [] },
-      phase_3_week_4_and_beyond: { goal: '', activities: [], avoid: [] },
+      phase_1_days_1_to_7: { goal: '', avoid: [] },
+      phase_2_days_8_to_21: { goal: '', avoid: [] },
+      phase_3_week_4_and_beyond: { goal: '', avoid: [] },
     },
     daily_habits: [],
     red_flags: [],
@@ -65,6 +68,7 @@ export default function RecoveryPlanScreen() {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScreenErrorBoundary>
         <View style={styles.header}>
           <Text style={styles.headerEmoji}>📋</Text>
           <Text style={styles.headerText}>Your Recovery Plan</Text>
@@ -94,10 +98,13 @@ export default function RecoveryPlanScreen() {
           <Text style={styles.phaseGoal}>{plan.recovery_plan.phase_1_days_1_to_7.goal}</Text>
           
           <Text style={styles.sectionLabel}>Activities:</Text>
-          {plan.recovery_plan.phase_1_days_1_to_7.activities.map((activity, index) => (
+          {normalizePhaseExercises(plan.recovery_plan.phase_1_days_1_to_7).map((ex, index) => (
             <View key={index} style={styles.listItem}>
               <Text style={styles.bullet}>•</Text>
-              <Text style={styles.listText}>{activity}</Text>
+              <Text style={styles.listText}>
+                {ex.name}
+                {ex.sets_reps && ex.sets_reps !== 'As in your plan' ? ` — ${ex.sets_reps}` : ''}
+              </Text>
             </View>
           ))}
 
@@ -119,10 +126,13 @@ export default function RecoveryPlanScreen() {
           <Text style={styles.phaseGoal}>{plan.recovery_plan.phase_2_days_8_to_21.goal}</Text>
           
           <Text style={styles.sectionLabel}>Activities:</Text>
-          {plan.recovery_plan.phase_2_days_8_to_21.activities.map((activity, index) => (
+          {normalizePhaseExercises(plan.recovery_plan.phase_2_days_8_to_21).map((ex, index) => (
             <View key={index} style={styles.listItem}>
               <Text style={styles.bullet}>•</Text>
-              <Text style={styles.listText}>{activity}</Text>
+              <Text style={styles.listText}>
+                {ex.name}
+                {ex.sets_reps && ex.sets_reps !== 'As in your plan' ? ` — ${ex.sets_reps}` : ''}
+              </Text>
             </View>
           ))}
 
@@ -144,10 +154,13 @@ export default function RecoveryPlanScreen() {
           <Text style={styles.phaseGoal}>{plan.recovery_plan.phase_3_week_4_and_beyond.goal}</Text>
           
           <Text style={styles.sectionLabel}>Activities:</Text>
-          {plan.recovery_plan.phase_3_week_4_and_beyond.activities.map((activity, index) => (
+          {normalizePhaseExercises(plan.recovery_plan.phase_3_week_4_and_beyond).map((ex, index) => (
             <View key={index} style={styles.listItem}>
               <Text style={styles.bullet}>•</Text>
-              <Text style={styles.listText}>{activity}</Text>
+              <Text style={styles.listText}>
+                {ex.name}
+                {ex.sets_reps && ex.sets_reps !== 'As in your plan' ? ` — ${ex.sets_reps}` : ''}
+              </Text>
             </View>
           ))}
 
@@ -185,6 +198,7 @@ export default function RecoveryPlanScreen() {
             ))}
           </View>
         )}
+        </ScreenErrorBoundary>
       </ScrollView>
 
       <View style={styles.footer}>

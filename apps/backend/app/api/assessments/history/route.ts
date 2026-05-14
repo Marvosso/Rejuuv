@@ -1,15 +1,26 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../../lib/db';
 import { getUserIdFromRequest } from '../../../../lib/auth';
+import { enforceRateLimit } from '../../../../lib/rate-limit';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  apiFailureFromException,
+  logApiRouteFailure,
+} from '../../../../lib/api-errors';
 
 export async function GET(request: Request) {
   try {
     const user_id = await getUserIdFromRequest(request);
     if (!user_id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiFailure(API_ERROR_CODES.UNAUTHORIZED, 'Unauthorized', 401, false);
     }
 
-    // Fetch the most recent assessment per body area, plus the last 10 overall
+    const limited = await enforceRateLimit(user_id, 'GET /assessments/history');
+    if (!limited.ok) {
+      return limited.response;
+    }
+
     const { data: assessments, error } = await supabase
       .from('assessments')
       .select('id, body_area, intake_data, analysis_result, safety_flagged, created_at')
@@ -19,20 +30,26 @@ export async function GET(request: Request) {
       .limit(50);
 
     if (error) {
-      console.error('Failed to fetch assessment history:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch assessment history' },
-        { status: 500 }
+      logApiRouteFailure('GET /api/assessments/history', new Error(error.message), {
+        supabase_code: error.code,
+      });
+      return apiFailure(
+        API_ERROR_CODES.INTERNAL_ERROR,
+        'Failed to fetch assessment history. Please try again.',
+        500,
+        true
       );
     }
 
-    // Parse intake_data JSON and group by body_area, keeping the most recent per area
-    const byArea: Record<string, {
-      body_area: string;
-      latest_pain_level: number | null;
-      latest_date: string;
-      history: Array<{ id: string; pain_level: number | null; date: string }>;
-    }> = {};
+    const byArea: Record<
+      string,
+      {
+        body_area: string;
+        latest_pain_level: number | null;
+        latest_date: string;
+        history: Array<{ id: string; pain_level: number | null; date: string }>;
+      }
+    > = {};
 
     for (const row of assessments ?? []) {
       let painLevel: number | null = null;
@@ -62,12 +79,6 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ areas: Object.values(byArea) }, { status: 200 });
   } catch (error) {
-    console.error('Error in GET /api/assessments/history:', error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'An unknown error occurred',
-      },
-      { status: 500 }
-    );
+    return apiFailureFromException('GET /api/assessments/history', error);
   }
 }

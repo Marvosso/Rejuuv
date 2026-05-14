@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabase } from '../../../../lib/db';
+import { TELEMETRY_EVENTS, trackTelemetry } from '../../../../lib/telemetry';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  logApiRouteFailure,
+} from '../../../../lib/api-errors';
+import { log } from '../../../../lib/logger';
 
 // Required for raw body access — App Router does not pre-parse bodies,
 // but marking this as nodejs runtime is an explicit safety guarantee.
@@ -14,9 +21,11 @@ const ACTIVE_STATUSES = new Set(['active', 'trialing']);
 export async function POST(request: Request) {
   const sig = request.headers.get('stripe-signature');
   if (!sig) {
-    return NextResponse.json(
-      { error: 'Missing stripe-signature header' },
-      { status: 400 }
+    return apiFailure(
+      API_ERROR_CODES.WEBHOOK_ERROR,
+      'Invalid webhook request.',
+      400,
+      false
     );
   }
 
@@ -25,10 +34,12 @@ export async function POST(request: Request) {
 
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
-    console.error('STRIPE_WEBHOOK_SECRET is not set');
-    return NextResponse.json(
-      { error: 'Webhook secret not configured' },
-      { status: 500 }
+    logApiRouteFailure('POST /api/stripe/webhook', new Error('STRIPE_WEBHOOK_SECRET missing'));
+    return apiFailure(
+      API_ERROR_CODES.CONFIG_ERROR,
+      'Webhook is not configured.',
+      500,
+      true
     );
   }
 
@@ -36,13 +47,27 @@ export async function POST(request: Request) {
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (err) {
-    console.error('Stripe webhook signature verification failed:', err);
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+    logApiRouteFailure('POST /api/stripe/webhook', err, { phase: 'signature_verify' });
+    return apiFailure(
+      API_ERROR_CODES.WEBHOOK_ERROR,
+      'Invalid webhook signature.',
+      400,
+      false
+    );
+  }
+
+  const { data: already } = await supabase
+    .from('processed_stripe_events')
+    .select('stripe_event_id')
+    .eq('stripe_event_id', event.id)
+    .maybeSingle();
+
+  if (already) {
+    return NextResponse.json({ received: true });
   }
 
   try {
     switch (event.type) {
-      // Fired when the user completes the Checkout flow.
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         if (session.mode === 'subscription' && session.subscription) {
@@ -54,8 +79,6 @@ export async function POST(request: Request) {
         break;
       }
 
-      // Fired whenever a subscription is created or its state changes
-      // (renewal, plan change, trial conversion, cancellation, etc.).
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
@@ -64,20 +87,28 @@ export async function POST(request: Request) {
         break;
       }
 
-      // Stripe also sends invoice.payment_failed, but the subscription
-      // status transitions to `past_due` which is covered by the
-      // `customer.subscription.updated` event above.
-
       default:
-        // Unhandled event types are silently ignored.
         break;
     }
   } catch (err) {
-    console.error(`Error handling Stripe event "${event.type}":`, err);
-    return NextResponse.json(
-      { error: 'Webhook handler error' },
-      { status: 500 }
+    logApiRouteFailure('POST /api/stripe/webhook', err, { event_type: event.type });
+    return apiFailure(
+      API_ERROR_CODES.WEBHOOK_ERROR,
+      'Webhook processing failed.',
+      500,
+      true
     );
+  }
+
+  const { error: insErr } = await supabase
+    .from('processed_stripe_events')
+    .insert({ stripe_event_id: event.id });
+
+  if (insErr && insErr.code !== '23505') {
+    log.error('stripe-webhook', 'processed_stripe_events_insert_failed', {
+      code: insErr.code,
+      message: (insErr.message ?? '').slice(0, 300),
+    });
   }
 
   return NextResponse.json({ received: true });
@@ -91,20 +122,26 @@ async function upsertSubscription(sub: Stripe.Subscription) {
   const customerId =
     typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
 
-  // Look up the internal user by their Stripe customer ID.
   const { data: user, error } = await supabase
     .from('users')
-    .select('id')
+    .select('id, subscription_tier')
     .eq('stripe_customer_id', customerId)
     .single();
 
   if (error || !user) {
-    console.error(
-      `No user found for Stripe customer "${customerId}". ` +
-        'Ensure the customer ID is stored in users.stripe_customer_id.'
-    );
+    log.warn('stripe-webhook', 'user_missing_for_customer', {
+      stripe_customer_id_suffix: customerId.slice(-6),
+    });
     return;
   }
+
+  const priorUserTier = user.subscription_tier;
+
+  const { data: existingSub } = await supabase
+    .from('subscriptions')
+    .select('status')
+    .eq('stripe_subscription_id', sub.id)
+    .maybeSingle();
 
   const priceId = sub.items.data[0]?.price?.id ?? null;
   const periodStart = sub.current_period_start
@@ -114,7 +151,6 @@ async function upsertSubscription(sub: Stripe.Subscription) {
     ? new Date(sub.current_period_end * 1000).toISOString()
     : null;
 
-  // Upsert on the unique stripe_subscription_id column.
   const { error: upsertError } = await supabase.from('subscriptions').upsert(
     {
       user_id: user.id,
@@ -130,15 +166,27 @@ async function upsertSubscription(sub: Stripe.Subscription) {
   );
 
   if (upsertError) {
-    console.error('Failed to upsert subscription:', upsertError);
+    log.error('stripe-webhook', 'subscription_upsert_failed', {
+      code: upsertError.code,
+      message: (upsertError.message ?? '').slice(0, 300),
+    });
     return;
   }
 
-  // Keep the denormalized users.subscription_tier column in sync so
-  // lightweight checks don't require joining the subscriptions table.
   const tier = ACTIVE_STATUSES.has(sub.status) ? 'paid' : 'free';
-  await supabase
-    .from('users')
-    .update({ subscription_tier: tier })
-    .eq('id', user.id);
+  await supabase.from('users').update({ subscription_tier: tier }).eq('id', user.id);
+
+  const statusChanged = !existingSub || existingSub.status !== sub.status;
+  if (statusChanged) {
+    trackTelemetry(user.id, TELEMETRY_EVENTS.SUBSCRIPTION_SYNCED, {
+      from_status: existingSub?.status ?? null,
+      to_status: sub.status,
+    });
+  }
+
+  if (priorUserTier !== 'paid' && tier === 'paid') {
+    trackTelemetry(user.id, TELEMETRY_EVENTS.SUBSCRIPTION_CONVERSION, {
+      stripe_status: sub.status,
+    });
+  }
 }

@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabase } from '../../../../lib/db';
 import { getUserIdFromRequest } from '../../../../lib/auth';
+import { enforceRateLimit } from '../../../../lib/rate-limit';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  logApiRouteFailure,
+} from '../../../../lib/api-errors';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -9,7 +15,12 @@ export async function POST(request: Request) {
   try {
     const userId = await getUserIdFromRequest(request);
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiFailure(API_ERROR_CODES.UNAUTHORIZED, 'Unauthorized', 401, false);
+    }
+
+    const limited = await enforceRateLimit(userId, 'POST /stripe/checkout');
+    if (!limited.ok) {
+      return limited.response;
     }
 
     // Fetch user email + existing Stripe customer ID from the public users table.
@@ -23,7 +34,7 @@ export async function POST(request: Request) {
       // Fall back to the auth system if the public row doesn't exist yet.
       const { data: authData } = await supabase.auth.admin.getUserById(userId);
       if (!authData.user) {
-        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        return apiFailure(API_ERROR_CODES.NOT_FOUND, 'User not found', 404, true);
       }
     }
 
@@ -47,9 +58,12 @@ export async function POST(request: Request) {
 
     const priceId = process.env.STRIPE_PRICE_ID_PRO;
     if (!priceId) {
-      return NextResponse.json(
-        { error: 'Stripe price ID is not configured' },
-        { status: 500 }
+      logApiRouteFailure('POST /api/stripe/checkout', new Error('STRIPE_PRICE_ID_PRO missing'));
+      return apiFailure(
+        API_ERROR_CODES.CONFIG_ERROR,
+        'Billing is temporarily unavailable.',
+        500,
+        true
       );
     }
 
@@ -75,10 +89,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ url: session.url });
   } catch (error) {
-    console.error('Error creating Stripe checkout session:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Checkout failed' },
-      { status: 500 }
+    logApiRouteFailure('POST /api/stripe/checkout', error);
+    return apiFailure(
+      API_ERROR_CODES.STRIPE_ERROR,
+      'Checkout could not be completed. Please try again.',
+      500,
+      true
     );
   }
 }

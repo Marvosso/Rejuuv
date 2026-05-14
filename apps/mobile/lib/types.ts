@@ -20,6 +20,8 @@ export interface Analysis {
   possible_contributors: string[];
   education: string;
   safety_note: string;
+  /** Set by POST /api/assessments after persistence; used when generating a plan. */
+  assessment_id?: string;
 }
 
 export interface SafetyCheck {
@@ -28,9 +30,19 @@ export interface SafetyCheck {
   recommended_action: string;
 }
 
+/** Structured exercise row from the recovery-plan model (preferred). */
+export interface RecoveryPlanExerciseRow {
+  name: string;
+  sets_reps: string;
+  why_this_helps: string;
+  form_tips: string[];
+}
+
 export interface RecoveryPhase {
   goal: string;
-  activities: string[];
+  /** @deprecated Prefer exercises; kept for older saved plans. */
+  activities?: string[];
+  exercises?: RecoveryPlanExerciseRow[];
   avoid: string[];
 }
 

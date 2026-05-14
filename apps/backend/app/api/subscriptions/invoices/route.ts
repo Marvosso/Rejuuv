@@ -3,6 +3,11 @@ import Stripe from 'stripe';
 import { supabase } from '../../../../lib/db';
 import { getUserIdFromRequest } from '../../../../lib/auth';
 import { stripe } from '../../../../lib/stripe';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  logApiRouteFailure,
+} from '../../../../lib/api-errors';
 
 // ---------------------------------------------------------------------------
 // Response shape
@@ -91,16 +96,18 @@ export async function GET(request: Request) {
     // ── Auth ────────────────────────────────────────────────────────────────
     const userId = await getUserIdFromRequest(request);
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiFailure(API_ERROR_CODES.UNAUTHORIZED, 'Unauthorized', 401, false);
     }
 
     // ── Config guard ────────────────────────────────────────────────────────
     const rejuuvProductId = process.env.REJUUV_PRODUCT_ID;
     if (!rejuuvProductId) {
-      console.error('REJUUV_PRODUCT_ID is not configured');
-      return NextResponse.json(
-        { error: 'Server misconfiguration: REJUUV_PRODUCT_ID is not set' },
-        { status: 500 }
+      logApiRouteFailure('GET /api/subscriptions/invoices', new Error('REJUUV_PRODUCT_ID missing'));
+      return apiFailure(
+        API_ERROR_CODES.CONFIG_ERROR,
+        'Billing is temporarily unavailable.',
+        500,
+        true
       );
     }
 
@@ -206,15 +213,12 @@ export async function GET(request: Request) {
       total_count: rejuuvInvoices.length,
     });
   } catch (error) {
-    console.error('Error fetching Rejuuv invoices:', error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to fetch invoices',
-      },
-      { status: 500 }
+    logApiRouteFailure('GET /api/subscriptions/invoices', error);
+    return apiFailure(
+      API_ERROR_CODES.STRIPE_ERROR,
+      'Could not load invoices. Please try again.',
+      500,
+      true
     );
   }
 }

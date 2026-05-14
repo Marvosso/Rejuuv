@@ -1,5 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import supabase, { getUser, onAuthStateChange } from './auth';
+import { AppState, type AppStateStatus, Alert } from 'react-native';
+import * as Linking from 'expo-linking';
+import type { AuthResponse } from '@supabase/supabase-js';
+import supabase, { getUser, isSupabaseConfigured, onAuthStateChange, signUp as authSignUp } from './auth';
+import { handleAuthDeepLink } from './auth-deep-link';
 
 interface User {
   id: string;
@@ -9,7 +13,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<AuthResponse>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -17,7 +21,10 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
-  signUp: async () => {},
+  signUp: async () => ({
+    data: { user: null, session: null },
+    error: null,
+  }),
   signIn: async () => {},
   signOut: async () => {},
 });
@@ -31,9 +38,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false);
+      return undefined;
+    }
+
     // Check if user is already logged in
     const checkUser = async () => {
       try {
+        try {
+          const initial = await Linking.getInitialURL();
+          if (initial) {
+            const r = await handleAuthDeepLink(initial);
+            if (r.handled && !r.ok && r.errorMessage) {
+              Alert.alert('Could not complete sign-in', r.errorMessage);
+            }
+          }
+        } catch (e) {
+          console.warn('Auth deep link (initial):', e);
+        }
+
         const currentUser = await getUser();
         if (currentUser) {
           setUser({
@@ -49,6 +73,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
 
     checkUser();
+
+    const linkSub = Linking.addEventListener('url', ({ url }) => {
+      void (async () => {
+        const r = await handleAuthDeepLink(url);
+        if (r.handled && !r.ok && r.errorMessage) {
+          Alert.alert('Could not complete sign-in', r.errorMessage);
+        }
+      })();
+    });
 
     // Subscribe to auth state changes
     let subscription: any = null;
@@ -72,6 +105,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     // Cleanup subscription on unmount
     return () => {
+      linkSub.remove();
       if (subscription) {
         try {
           subscription.unsubscribe();
@@ -82,27 +116,40 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
   }, []);
 
-  const signUp = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+  /** Refresh tokens when returning to foreground (reduces surprise 401s on long sessions). */
+  useEffect(() => {
+    supabase.auth.startAutoRefresh();
+    const onChange = (state: AppStateStatus) => {
+      if (state === 'active') {
+        void supabase.auth.startAutoRefresh();
+      } else {
+        supabase.auth.stopAutoRefresh();
+      }
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => {
+      sub.remove();
+      supabase.auth.stopAutoRefresh();
+    };
+  }, []);
 
-    if (error) {
-      throw error;
+  const signUp = async (email: string, password: string) => {
+    const result = await authSignUp(email, password);
+
+    if (result.error) {
+      throw result.error;
     }
 
     // If email confirmation is required, data.session will be null
     // Only set user if we have a session (auto-login enabled)
-    if (data.user && data.session) {
+    if (result.data.user && result.data.session) {
       setUser({
-        id: data.user.id,
-        email: data.user.email || '',
+        id: result.data.user.id,
+        email: result.data.user.email || '',
       });
     }
-    
-    // Return the result so the caller can check if confirmation is needed
-    return { data, error: null };
+
+    return result;
   };
 
   const signIn = async (email: string, password: string) => {
@@ -126,8 +173,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('signOut:', e);
+    } finally {
+      setUser(null);
+    }
   };
 
   const value: AuthContextType = {

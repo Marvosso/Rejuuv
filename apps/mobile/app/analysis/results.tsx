@@ -10,15 +10,13 @@ import {
   Animated,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { getSession } from '../../lib/auth';
-import { Colors, Shadows, Spacing, Radius } from '../../lib/theme';
+import { apiFetchJson } from '../../lib/api-fetch';
+import { tryParseJson } from '../../lib/safe-json';
+import { Colors, Spacing, Radius } from '../../lib/theme';
+import type { Analysis } from '../../lib/types';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
 
-interface AnalysisData {
-  summary: string;
-  possible_contributors: string[];
-  education: string;
-  safety_note: string;
-}
+type AnalysisData = Omit<Analysis, 'assessment_id'>;
 
 export default function ResultsScreen() {
   const [loading, setLoading] = useState(false);
@@ -27,12 +25,37 @@ export default function ResultsScreen() {
 
   const analysisParam = params.analysis as string | undefined;
   const intakeDataParam = params.intakeData as string | undefined;
+  const assessmentIdFromRoute =
+    typeof params.assessment_id === 'string' && params.assessment_id.length > 0
+      ? params.assessment_id
+      : undefined;
 
-  const analysis: AnalysisData = analysisParam
-    ? JSON.parse(analysisParam)
+  let parsedAnalysis: Analysis | null = null;
+  let intakeData: Record<string, unknown> | null = null;
+  let routeDataCorrupt = false;
+
+  if (analysisParam) {
+    const ar = tryParseJson<Analysis>(analysisParam);
+    if (!ar.ok) routeDataCorrupt = true;
+    else parsedAnalysis = ar.data;
+  }
+  if (intakeDataParam) {
+    const ir = tryParseJson<Record<string, unknown>>(intakeDataParam);
+    if (!ir.ok) routeDataCorrupt = true;
+    else intakeData = ir.data;
+  }
+
+  const assessmentId =
+    assessmentIdFromRoute ?? parsedAnalysis?.assessment_id ?? undefined;
+
+  const analysis: AnalysisData = parsedAnalysis
+    ? {
+        summary: parsedAnalysis.summary,
+        possible_contributors: parsedAnalysis.possible_contributors ?? [],
+        education: parsedAnalysis.education,
+        safety_note: parsedAnalysis.safety_note,
+      }
     : { summary: '', possible_contributors: [], education: '', safety_note: '' };
-
-  const intakeData = intakeDataParam ? JSON.parse(intakeDataParam) : null;
 
   // Staggered animations for cards
   const headerAnim = useRef(new Animated.Value(0)).current;
@@ -61,39 +84,59 @@ export default function ResultsScreen() {
   });
 
   const handleGeneratePlan = async () => {
-    if (!intakeData) {
-      Alert.alert('Error', 'Unable to generate recovery plan. Please start over.', [{ text: 'OK' }]);
+    if (!intakeData || routeDataCorrupt) {
+      Alert.alert(
+        'Something got lost on the way here',
+        'Please go back through intake so we can build your plan safely.',
+        [{ text: 'OK' }]
+      );
       return;
     }
     setLoading(true);
     try {
-      const session = await getSession();
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-      const response = await fetch(`${apiUrl}/recovery-plans`, {
+      const result = await apiFetchJson<Record<string, unknown>>('/recovery-plans', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({ assessment: analysis, intake_data: intakeData }),
+        body: JSON.stringify({
+          assessment: analysis,
+          intake_data: intakeData,
+          ...(assessmentId ? { assessment_id: assessmentId } : {}),
+        }),
       });
 
-      if (!response.ok) throw new Error('Failed to generate recovery plan');
+      if (!result.ok) throw new Error(result.message);
 
-      const recoveryPlan = await response.json();
-      router.push(
-        '/analysis/plan?' +
-          new URLSearchParams({ plan: JSON.stringify(recoveryPlan) }).toString()
-      );
+      const recoveryPlan = result.data;
+      const planParams = new URLSearchParams({ plan: JSON.stringify(recoveryPlan) });
+      if (intakeData?.body_area) planParams.set('body_area', String(intakeData.body_area));
+      router.push('/analysis/plan?' + planParams.toString());
     } catch (error) {
       Alert.alert('Error', 'Something went wrong. Please try again.', [{ text: 'OK' }]);
+    } finally {
       setLoading(false);
     }
   };
 
+  if (routeDataCorrupt) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.corruptWrap}>
+          <Text style={styles.corruptTitle}>We could not load this screen</Text>
+          <Text style={styles.corruptBody}>
+            A link may have been cut off or expired. Your account is fine — go back to home and run
+            through intake again when you feel up to it.
+          </Text>
+          <TouchableOpacity style={styles.generateButton} onPress={() => router.replace('/')} activeOpacity={0.85}>
+            <Text style={styles.generateButtonText}>Back to home</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScreenErrorBoundary>
         {/* Header */}
         <Animated.View style={[styles.header, makeSlide(headerAnim)]}>
           <View style={styles.successBadge}>
@@ -161,6 +204,7 @@ export default function ResultsScreen() {
             </View>
           </Animated.View>
         ) : null}
+        </ScreenErrorBoundary>
       </ScrollView>
 
       {loading && (
@@ -198,6 +242,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  corruptWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: Spacing.xxl,
+    gap: Spacing.lg,
+  },
+  corruptTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  corruptBody: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    lineHeight: 24,
   },
   scrollContent: {
     padding: Spacing.xxl,

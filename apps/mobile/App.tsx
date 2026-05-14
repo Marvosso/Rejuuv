@@ -22,7 +22,7 @@ function HomeScreen() {
         <>
           <Text style={styles.greeting}>Welcome back!</Text>
           <Text style={styles.userEmail}>{user.email}</Text>
-          <Link href="/intake/body-area" asChild>
+          <Link href="/intake/body-area?reset=1" asChild>
             <TouchableOpacity style={styles.button} activeOpacity={0.7}>
               <Text style={styles.buttonText}>Get Started</Text>
             </TouchableOpacity>

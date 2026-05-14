@@ -8,7 +8,7 @@
  *   POST /api/subscriptions/cancel   → schedule cancellation at period end
  *   GET  /api/subscriptions/invoices → billing history
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,10 +19,12 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { subscriptionApi } from '../../lib/api-client';
 import type { Subscription, Invoice } from '../../lib/types';
+import { logClientError } from '../../lib/crash-reporting';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
 
 // ─── Palette (matches the rest of the Rejuuv app) ─────────────────────────────
 
@@ -363,6 +365,8 @@ function InvoiceRow({ invoice, onViewPdf }: InvoiceRowProps) {
 
 export default function ManageSubscriptionScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ checkout?: string | string[]; session_id?: string | string[] }>();
+  const stripeReturnHandled = useRef<string | null>(null);
 
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -411,6 +415,32 @@ export default function ManageSubscriptionScreen() {
     void fetchData();
   }, [fetchData]);
 
+  const firstQuery = (v: string | string[] | undefined) => (typeof v === 'string' ? v : Array.isArray(v) ? v[0] : undefined);
+
+  /** Stripe Checkout success/cancel when return URLs use `rejuuv://subscription?checkout=...` (see docs/DEEP_LINKS.md). */
+  useEffect(() => {
+    const checkout = firstQuery(params.checkout);
+    if (!checkout) return;
+    const key = `${checkout}:${firstQuery(params.session_id) ?? ''}`;
+    if (stripeReturnHandled.current === key) return;
+    stripeReturnHandled.current = key;
+
+    if (checkout === 'success') {
+      void (async () => {
+        await fetchData();
+        Alert.alert(
+          'Back from checkout',
+          'We refreshed your plan status. If something still looks off, pull down to retry in a moment.',
+          [{ text: 'OK', onPress: () => router.replace('/subscription') }]
+        );
+      })();
+    } else if (checkout === 'cancel') {
+      Alert.alert('Checkout closed', 'No charge was made. You can upgrade again whenever you like.', [
+        { text: 'OK', onPress: () => router.replace('/subscription') },
+      ]);
+    }
+  }, [params.checkout, params.session_id, fetchData, router]);
+
   const onRefresh = () => {
     setRefreshing(true);
     void fetchData();
@@ -431,6 +461,7 @@ export default function ManageSubscriptionScreen() {
         await fetchData();
       }
     } catch (err) {
+      logClientError(err instanceof Error ? err : new Error(String(err)), { where: 'subscription_upgrade' });
       Alert.alert(
         'Upgrade Failed',
         err instanceof Error ? err.message : 'Something went wrong. Please try again.',
@@ -465,6 +496,7 @@ export default function ManageSubscriptionScreen() {
         Alert.alert('Plan Updated', 'Your plan has been updated successfully.', [{ text: 'OK' }]);
       }
     } catch (err) {
+      logClientError(err instanceof Error ? err : new Error(String(err)), { where: 'subscription_manage' });
       Alert.alert(
         'Error',
         err instanceof Error ? err.message : 'Could not update plan. Please try again.',
@@ -506,6 +538,7 @@ export default function ManageSubscriptionScreen() {
         [{ text: 'OK' }]
       );
     } catch (err) {
+      logClientError(err instanceof Error ? err : new Error(String(err)), { where: 'subscription_cancel' });
       Alert.alert(
         'Cancellation Failed',
         err instanceof Error ? err.message : 'Something went wrong. Please try again.',
@@ -534,6 +567,7 @@ export default function ManageSubscriptionScreen() {
   }
 
   return (
+    <ScreenErrorBoundary>
     <View style={styles.container}>
       {/* ── Header ── */}
       <View style={styles.header}>
@@ -594,8 +628,22 @@ export default function ManageSubscriptionScreen() {
             ))
           )}
         </View>
+
+        <Text style={styles.sectionLabel}>DATA & PRIVACY</Text>
+        <TouchableOpacity
+          style={styles.privacyLinkCard}
+          onPress={() => router.push('/settings')}
+          activeOpacity={0.75}
+        >
+          <View style={styles.privacyLinkTextCol}>
+            <Text style={styles.privacyLinkTitle}>Data, privacy & account</Text>
+            <Text style={styles.privacyLinkSub}>Beta summary, retention, delete account</Text>
+          </View>
+          <Text style={styles.privacyLinkChevron}>›</Text>
+        </TouchableOpacity>
       </ScrollView>
     </View>
+    </ScreenErrorBoundary>
   );
 }
 
@@ -752,4 +800,20 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 24, gap: 8 },
   emptyEmoji: { fontSize: 32 },
   emptyText:  { fontSize: 14, color: C.textMuted },
+
+  privacyLinkCard: {
+    backgroundColor: C.white,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  privacyLinkTextCol: { flex: 1 },
+  privacyLinkTitle: { fontSize: 16, fontWeight: '700', color: C.textDark, marginBottom: 4 },
+  privacyLinkSub: { fontSize: 13, color: C.textLight, lineHeight: 18 },
+  privacyLinkChevron: { fontSize: 22, color: C.textMuted, fontWeight: '300' },
 });

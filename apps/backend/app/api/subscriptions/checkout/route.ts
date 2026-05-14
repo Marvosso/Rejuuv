@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getUserIdFromRequest } from '../../../../lib/auth';
+import { enforceRateLimit } from '../../../../lib/rate-limit';
 import { stripe } from '../../../../lib/stripe';
 import { resolveStripeCustomer } from '../../../../lib/stripe-customer';
+import { TELEMETRY_EVENTS, trackTelemetry } from '../../../../lib/telemetry';
+import {
+  apiFailure,
+  API_ERROR_CODES,
+  logApiRouteFailure,
+} from '../../../../lib/api-errors';
 
 /**
  * POST /api/subscriptions/checkout
@@ -30,7 +37,12 @@ export async function POST(request: Request) {
   try {
     const userId = await getUserIdFromRequest(request);
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiFailure(API_ERROR_CODES.UNAUTHORIZED, 'Unauthorized', 401, false);
+    }
+
+    const limited = await enforceRateLimit(userId, 'POST /subscriptions/checkout');
+    if (!limited.ok) {
+      return limited.response;
     }
 
     const body = await request.json().catch(() => ({}));
@@ -45,9 +57,11 @@ export async function POST(request: Request) {
     const price_id = bodyPriceId ?? process.env.STRIPE_PRICE_ID_PRO;
 
     if (!price_id) {
-      return NextResponse.json(
-        { error: 'price_id is required and STRIPE_PRICE_ID_PRO is not configured' },
-        { status: 400 }
+      return apiFailure(
+        API_ERROR_CODES.CONFIG_ERROR,
+        'Billing is not configured. Please try again later.',
+        400,
+        true
       );
     }
 
@@ -60,9 +74,11 @@ export async function POST(request: Request) {
       });
       const productId = (price.product as Stripe.Product).id;
       if (productId !== rejuuvProductId) {
-        return NextResponse.json(
-          { error: 'price_id does not belong to the Rejuuv product' },
-          { status: 400 }
+        return apiFailure(
+          API_ERROR_CODES.VALIDATION_ERROR,
+          'Invalid price selection.',
+          400,
+          false
         );
       }
     }
@@ -84,9 +100,11 @@ export async function POST(request: Request) {
           : existingSub.customer.id;
 
       if (subCustomerId !== customerId) {
-        return NextResponse.json(
-          { error: 'Subscription does not belong to this user' },
-          { status: 403 }
+        return apiFailure(
+          API_ERROR_CODES.FORBIDDEN,
+          'Subscription does not belong to this user',
+          403,
+          false
         );
       }
 
@@ -97,9 +115,11 @@ export async function POST(request: Request) {
             (item.price.product as Stripe.Product).id === rejuuvProductId
         );
         if (!isRejuuv) {
-          return NextResponse.json(
-            { error: 'Subscription is not a Rejuuv subscription' },
-            { status: 403 }
+          return apiFailure(
+            API_ERROR_CODES.FORBIDDEN,
+            'Subscription is not a Rejuuv subscription',
+            403,
+            false
           );
         }
       }
@@ -112,9 +132,11 @@ export async function POST(request: Request) {
       );
 
       if (!itemToUpdate) {
-        return NextResponse.json(
-          { error: 'No Rejuuv item found on subscription' },
-          { status: 400 }
+        return apiFailure(
+          API_ERROR_CODES.VALIDATION_ERROR,
+          'No billable item found on this subscription.',
+          400,
+          true
         );
       }
 
@@ -122,6 +144,11 @@ export async function POST(request: Request) {
       const updatedSub = await stripe.subscriptions.update(subscription_id, {
         items: [{ id: itemToUpdate.id, price: price_id }],
         proration_behavior: 'create_prorations',
+      });
+
+      trackTelemetry(userId, TELEMETRY_EVENTS.SUBSCRIPTION_PLAN_CHANGED, {
+        path: 'upgrade',
+        subscription_id,
       });
 
       return NextResponse.json({
@@ -162,15 +189,22 @@ export async function POST(request: Request) {
     }
     const session = await stripe.checkout.sessions.create(sessionParams);
 
+    trackTelemetry(userId, TELEMETRY_EVENTS.SUBSCRIPTION_CHECKOUT_STARTED, {
+      path: 'new',
+      trial_days:
+        trial_days != null && trial_days > 0 && !subscription_id
+          ? Math.min(30, Math.round(trial_days))
+          : 0,
+    });
+
     return NextResponse.json({ url: session.url });
   } catch (error) {
-    console.error('Error in subscriptions/checkout:', error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : 'Checkout failed',
-      },
-      { status: 500 }
+    logApiRouteFailure('POST /api/subscriptions/checkout', error);
+    return apiFailure(
+      API_ERROR_CODES.STRIPE_ERROR,
+      'Checkout could not be completed. Please try again.',
+      500,
+      true
     );
   }
 }

@@ -9,46 +9,38 @@ import {
   useWindowDimensions,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import Svg, { G, Rect, Ellipse } from 'react-native-svg';
 import { Colors, Spacing, Radius } from '../../lib/theme';
+import { BODY_AREAS, SILHOUETTE_PARTS } from '../../lib/intake-constants';
+import { useIntakeWizard } from '../../lib/intake-wizard-context';
+import { microInsightForBodyArea } from '../../lib/intake-micro-insights';
+import { IntakeProgressHeader, IntakeMicroInsight } from '../../components/intake';
 
 const BREAKPOINT_WIDE = 600;
-
-const BODY_AREAS = [
-  { key: 'neck',       label: 'Neck',       emoji: '🦴', description: 'Cervical spine & neck',          color: Colors.primary },
-  { key: 'shoulder',   label: 'Shoulder',   emoji: '💪', description: 'Shoulder joint & rotator cuff',  color: '#8B5CF6' },
-  { key: 'upper_back', label: 'Upper Back', emoji: '🔼', description: 'Thoracic spine & upper back',    color: '#F59E0B' },
-  { key: 'lower_back', label: 'Lower Back', emoji: '🔧', description: 'Lumbar spine & lower back',      color: Colors.secondary },
-  { key: 'hip',        label: 'Hip',        emoji: '🦷', description: 'Hip joint & surrounding area',   color: '#EF4444' },
-  { key: 'knee',       label: 'Knee',       emoji: '🦵', description: 'Knee joint & surrounding area',  color: Colors.success },
-  { key: 'ankle',      label: 'Ankle',      emoji: '🦶', description: 'Ankle joint & lower leg',        color: '#06B6D4' },
-];
-
-// Silhouette regions: ellipse positions (viewBox 0 0 200 420) mapped to intake body_area key
-const SILHOUETTE_PARTS: { key: string; bodyAreaKey: string; cx: number; cy: number; rx: number; ry: number }[] = [
-  { key: 'neck', bodyAreaKey: 'neck', cx: 100, cy: 72, rx: 12, ry: 10 },
-  { key: 'shoulder_left', bodyAreaKey: 'shoulder', cx: 68, cy: 100, rx: 14, ry: 12 },
-  { key: 'shoulder_right', bodyAreaKey: 'shoulder', cx: 132, cy: 100, rx: 14, ry: 12 },
-  { key: 'upper_back', bodyAreaKey: 'upper_back', cx: 100, cy: 130, rx: 22, ry: 18 },
-  { key: 'lower_back', bodyAreaKey: 'lower_back', cx: 100, cy: 175, rx: 20, ry: 16 },
-  { key: 'hip_left', bodyAreaKey: 'hip', cx: 76, cy: 210, rx: 16, ry: 14 },
-  { key: 'hip_right', bodyAreaKey: 'hip', cx: 124, cy: 210, rx: 16, ry: 14 },
-  { key: 'knee_left', bodyAreaKey: 'knee', cx: 78, cy: 295, rx: 14, ry: 14 },
-  { key: 'knee_right', bodyAreaKey: 'knee', cx: 122, cy: 295, rx: 14, ry: 14 },
-  { key: 'ankle_left', bodyAreaKey: 'ankle', cx: 80, cy: 375, rx: 11, ry: 10 },
-  { key: 'ankle_right', bodyAreaKey: 'ankle', cx: 120, cy: 375, rx: 11, ry: 10 },
-];
 
 export default function BodyAreaScreen() {
   const [selected, setSelected] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const router = useRouter();
+  const { reset: resetParam } = useLocalSearchParams<{ reset?: string }>();
+  const { setBodyArea, resetWizard, bodyArea: ctxBody } = useIntakeWizard();
   const { width } = useWindowDimensions();
   const numColumns = width >= BREAKPOINT_WIDE ? 3 : 2;
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const cardAnims = useRef(BODY_AREAS.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    if (resetParam === '1') {
+      resetWizard();
+      setSelected(null);
+      return;
+    }
+    if (ctxBody) {
+      setSelected(ctxBody);
+    }
+  }, [resetParam, resetWizard, ctxBody]);
 
   useEffect(() => {
     Animated.parallel([
@@ -64,34 +56,29 @@ export default function BodyAreaScreen() {
 
   const handleContinue = () => {
     if (!selected) return;
-    router.push(`/intake/pain-level?body_area=${selected}`);
-  };
-
-  const handleQuickStart = (bodyAreaKey: string, presetTrigger: string[]) => {
-    const triggerParam = encodeURIComponent(JSON.stringify(presetTrigger));
-    router.push(`/intake/pain-level?body_area=${bodyAreaKey}&trigger=${triggerParam}`);
+    setBodyArea(selected);
+    router.push('/intake/pain-level');
   };
 
   const selectFromMap = (bodyAreaKey: string) => setSelected(bodyAreaKey);
 
+  const insight = selected ? microInsightForBodyArea(selected) : null;
+
   return (
     <View style={styles.container}>
-      {/* Progress */}
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: '25%' }]} />
-      </View>
-      <View style={styles.topBar}>
-        <Text style={styles.progressLabel}>Step 1 of 4</Text>
-        <TouchableOpacity onPress={() => router.replace('/')} style={styles.cancelBtn}>
-          <Text style={styles.cancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
+      <IntakeProgressHeader
+        currentStep={1}
+        showBack={false}
+        onCancel={() => router.replace('/')}
+      />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fadeAnim }}>
           <Text style={styles.title}>Where does it hurt?</Text>
-          <Text style={styles.subtitle}>Select the area giving you the most trouble</Text>
+          <Text style={styles.subtitle}>Pick the area that bothers you most — you can refine later.</Text>
         </Animated.View>
+
+        {insight ? <IntakeMicroInsight message={insight} /> : null}
 
         <View style={styles.viewToggle}>
           <TouchableOpacity
@@ -99,14 +86,14 @@ export default function BodyAreaScreen() {
             onPress={() => setViewMode('list')}
             activeOpacity={0.8}
           >
-            <Text style={[styles.viewToggleText, viewMode === 'list' && styles.viewToggleTextActive]}>List</Text>
+            <Text style={[styles.viewToggleText, viewMode === 'list' && styles.viewToggleTextActive]}>Large icons</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.viewToggleBtn, viewMode === 'map' && styles.viewToggleBtnActive]}
             onPress={() => setViewMode('map')}
             activeOpacity={0.8}
           >
-            <Text style={[styles.viewToggleText, viewMode === 'map' && styles.viewToggleTextActive]}>Body Map</Text>
+            <Text style={[styles.viewToggleText, viewMode === 'map' && styles.viewToggleTextActive]}>Body map</Text>
           </TouchableOpacity>
         </View>
 
@@ -120,7 +107,17 @@ export default function BodyAreaScreen() {
                   style={[
                     styles.chipGridItem,
                     { width: `${100 / numColumns}%` },
-                    { opacity: cardAnims[index], transform: [{ translateY: cardAnims[index].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+                    {
+                      opacity: cardAnims[index],
+                      transform: [
+                        {
+                          translateY: cardAnims[index].interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [12, 0],
+                          }),
+                        },
+                      ],
+                    },
                   ]}
                 >
                   <TouchableOpacity
@@ -131,8 +128,13 @@ export default function BodyAreaScreen() {
                     onPress={() => setSelected(area.key)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.chipEmoji}>{area.emoji}</Text>
-                    <Text style={[styles.chipLabel, isSelected && { color: area.color, fontWeight: '700' }]}>{area.label}</Text>
+                    <Text style={styles.chipEmojiLarge}>{area.emoji}</Text>
+                    <Text style={[styles.chipLabel, isSelected && { color: area.color, fontWeight: '700' }]}>
+                      {area.label}
+                    </Text>
+                    <Text style={styles.chipDesc} numberOfLines={2}>
+                      {area.description}
+                    </Text>
                   </TouchableOpacity>
                 </Animated.View>
               );
@@ -140,6 +142,7 @@ export default function BodyAreaScreen() {
           </View>
         ) : (
           <Animated.View style={[styles.silhouetteWrap, { opacity: fadeAnim }]}>
+            <Text style={styles.mapTeaser}>Tap a highlighted region</Text>
             <Svg
               viewBox="0 0 200 420"
               style={styles.silhouetteSvg}
@@ -194,8 +197,8 @@ export default function BodyAreaScreen() {
                       {
                         left: `${((part.cx - part.rx) / 200) * 100}%`,
                         top: `${((part.cy - part.ry) / 420) * 100}%`,
-                        width: `${(part.rx * 2 / 200) * 100}%`,
-                        height: `${(part.ry * 2 / 420) * 100}%`,
+                        width: `${((part.rx * 2) / 200) * 100}%`,
+                        height: `${((part.ry * 2) / 420) * 100}%`,
                       },
                     ]}
                     activeOpacity={1}
@@ -207,34 +210,6 @@ export default function BodyAreaScreen() {
             )}
           </Animated.View>
         )}
-
-        <View style={styles.commonIssuesSection}>
-          <Text style={styles.commonIssuesLabel}>Common Issues</Text>
-          <TouchableOpacity style={styles.commonIssuesCard} onPress={() => handleQuickStart('lower_back', ['Sitting'])} activeOpacity={0.8}>
-            <View style={styles.commonIssuesCardContent}>
-              <View style={styles.popularBadge}>
-                <Text style={styles.popularBadgeText}>Popular</Text>
-              </View>
-              <Text style={styles.commonIssuesEmoji}>💺</Text>
-              <View style={styles.commonIssuesText}>
-                <Text style={styles.commonIssuesTitle}>I sit 8+ hours, lower back</Text>
-                <Text style={styles.commonIssuesSubtitle}>Desk worker · Lower back</Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.commonIssuesCard} onPress={() => handleQuickStart('neck', ['Sitting'])} activeOpacity={0.8}>
-            <View style={styles.commonIssuesCardContent}>
-              <View style={styles.popularBadge}>
-                <Text style={styles.popularBadgeText}>Popular</Text>
-              </View>
-              <Text style={styles.commonIssuesEmoji}>🖥️</Text>
-              <View style={styles.commonIssuesText}>
-                <Text style={styles.commonIssuesTitle}>Desk worker, neck</Text>
-                <Text style={styles.commonIssuesSubtitle}>Neck · Screen time</Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </View>
       </ScrollView>
 
       <View style={styles.footer}>
@@ -245,7 +220,7 @@ export default function BodyAreaScreen() {
           activeOpacity={0.85}
         >
           <Text style={styles.continueButtonText}>
-            {selected ? `Continue with ${BODY_AREAS.find((a) => a.key === selected)?.label}` : 'Select an area to continue'}
+            {selected ? `Continue — ${BODY_AREAS.find((a) => a.key === selected)?.label}` : 'Select an area'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -257,38 +232,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: Colors.border,
-  },
-  progressFill: {
-    height: 4,
-    backgroundColor: Colors.primary,
-    borderRadius: 2,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xxl,
-    paddingVertical: Spacing.sm,
-  },
-  progressLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  cancelBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  cancelBtnText: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    fontWeight: '500',
   },
   scrollContent: {
     padding: Spacing.xxl,
@@ -304,13 +247,12 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: Colors.textSecondary,
-    marginBottom: Spacing.xxl,
+    marginBottom: Spacing.lg,
     lineHeight: 24,
   },
   viewToggle: {
     flexDirection: 'row',
-    gap: 0,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.xl,
     backgroundColor: Colors.inputBg,
     borderRadius: Radius.md,
     padding: 4,
@@ -324,7 +266,9 @@ const styles = StyleSheet.create({
   },
   viewToggleBtnActive: {
     backgroundColor: Colors.surface,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' } : { elevation: 1, shadowOpacity: 0.06, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } }),
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }
+      : { elevation: 1, shadowOpacity: 0.06, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } }),
   },
   viewToggleText: {
     fontSize: 14,
@@ -337,34 +281,48 @@ const styles = StyleSheet.create({
   chipGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.sm,
+    gap: Spacing.md,
   },
   chipGridItem: {
     paddingHorizontal: 2,
   },
   chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.sm,
+    minHeight: 120,
+    paddingVertical: Spacing.lg,
     paddingHorizontal: Spacing.md,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.lg,
     borderWidth: 1.5,
     borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
   },
-  chipEmoji: {
-    fontSize: 20,
+  chipEmojiLarge: {
+    fontSize: 36,
   },
   chipLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  chipDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  mapTeaser: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
   },
   silhouetteWrap: {
     alignSelf: 'center',
     marginVertical: Spacing.md,
-    width: 160,
+    width: 180,
     maxWidth: '100%',
     aspectRatio: 200 / 420,
     position: 'relative',
@@ -375,65 +333,6 @@ const styles = StyleSheet.create({
   },
   silhouetteWebOverlay: {
     position: 'absolute',
-  },
-  commonIssuesSection: {
-    marginTop: Spacing.xxl,
-    padding: Spacing.lg,
-    backgroundColor: Colors.primaryLight,
-    borderRadius: Radius.lg,
-    gap: Spacing.md,
-  },
-  commonIssuesLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  commonIssuesCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  commonIssuesCardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    position: 'relative',
-  },
-  popularBadge: {
-    position: 'absolute',
-    top: -6,
-    right: 0,
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: Radius.sm,
-  },
-  popularBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.textInverse,
-    letterSpacing: 0.5,
-  },
-  commonIssuesEmoji: {
-    fontSize: 24,
-  },
-  commonIssuesText: {
-    flex: 1,
-  },
-  commonIssuesTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-  },
-  commonIssuesSubtitle: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginTop: 2,
   },
   footer: {
     position: 'absolute',

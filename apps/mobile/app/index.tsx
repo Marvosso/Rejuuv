@@ -1,67 +1,68 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   TouchableOpacity,
-  Pressable,
   Animated,
   ScrollView,
   StatusBar,
-  Platform,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../lib/auth-context';
+import { apiFetchJson } from '../lib/api-fetch';
 import { registerPushToken } from '../lib/notifications';
-import { Colors, Spacing, Radius, getShadow } from '../lib/theme';
+import {
+  pickPrimaryPlan,
+  syncDailyWinReminder,
+  firstExerciseFromPlan,
+  type PlanForDailyWin,
+} from '../lib/daily-win-notifications';
+import {
+  processCheckInOutbox,
+  getPendingCheckInOutboxCount,
+  submitCheckInWithOfflineQueue,
+} from '../lib/check-in-outbox';
+import { Colors, Spacing, Radius } from '../lib/theme';
+import { CheckInCelebration, type PainChangeValue } from '../components/check-in-celebration';
+import {
+  AdaptiveGuidance,
+  DailyActionCard,
+  RecoveryInsightCard,
+  TimelinePreview,
+  ProgressSummary,
+  CheckInPrompt,
+} from '../components/today';
 
-// Placeholder timeline steps: first completed, rest upcoming (can be wired to API later)
-const RECOVERY_STEPS: { id: string; emoji: string; label: string; description: string; status: 'completed' | 'current' | 'upcoming' }[] = [
-  { id: '1', emoji: '📍', label: 'Track Your Pain', description: "Log symptoms and monitor pain levels over time to see what's working.", status: 'completed' },
-  { id: '2', emoji: '💡', label: 'Get Expert Guidance', description: 'AI-powered recovery plans tailored to your specific condition and needs.', status: 'upcoming' },
-  { id: '3', emoji: '📈', label: 'See Your Progress', description: 'Visual tracking of your improvement journey week by week.', status: 'upcoming' },
-];
+interface CheckInRow {
+  id: string;
+  pain_level: number | null;
+  pain_change: string;
+  difficulty: string;
+  recovery_plan_id: string | null;
+  created_at: string;
+}
 
-function TimelineStep({
-  emoji,
-  label,
-  description,
-  status,
-  isLast,
-  delay,
-}: {
-  emoji: string;
-  label: string;
-  description: string;
-  status: 'completed' | 'current' | 'upcoming';
-  isLast: boolean;
-  delay: number;
-}) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(12)).current;
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacity, { toValue: 1, duration: 400, delay, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: 0, duration: 400, delay, useNativeDriver: true }),
-    ]).start();
-  }, [delay]);
+interface HistorySummary {
+  total: number;
+  avg_pain: number | null;
+  trend: string;
+  streak_days?: number;
+}
 
-  const iconBg = status === 'completed' ? Colors.success : status === 'current' ? Colors.primary : Colors.textMuted;
+type PlanRow = PlanForDailyWin & {
+  id: string;
+  body_area: string;
+  status: string;
+  created_at: string;
+};
 
-  return (
-    <Animated.View style={[styles.timelineRow, { opacity, transform: [{ translateY }] }]}>
-      <View style={styles.timelineLeft}>
-        <View style={[styles.timelineIcon, { backgroundColor: iconBg }]}>
-          <Text style={[styles.timelineEmoji, { opacity: status === 'upcoming' ? 0.7 : 1 }]}>{emoji}</Text>
-        </View>
-        {!isLast && <View style={styles.timelineLine} />}
-      </View>
-      <View style={styles.timelineContent}>
-        <Text style={styles.timelineLabel}>{label}</Text>
-        <Text style={[styles.timelineDescription, status === 'upcoming' && { color: Colors.textMuted }]}>{description}</Text>
-      </View>
-    </Animated.View>
-  );
+function formatBodyAreaLabel(area: string): string {
+  if (!area || !area.trim()) return 'Your recovery';
+  const s = area.replace(/_/g, ' ');
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const FeatureCard = ({
@@ -94,44 +95,112 @@ const FeatureCard = ({
   );
 };
 
-function SmallActionCard({
-  emoji,
-  title,
-  subtitle,
-  onPress,
-}: {
-  emoji: string;
-  title: string;
-  subtitle: string;
-  onPress: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const isWeb = Platform.OS === 'web';
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.smallCard,
-        getShadow(hovered || pressed ? 'card' : 'none'),
-        (hovered || pressed) && { borderColor: Colors.primary },
-      ]}
-      onMouseEnter={isWeb ? () => setHovered(true) : undefined}
-      onMouseLeave={isWeb ? () => setHovered(false) : undefined}
-    >
-      <Text style={styles.smallCardEmoji}>{emoji}</Text>
-      <Text style={styles.smallCardTitle}>{title}</Text>
-      <Text style={styles.smallCardSubtitle}>{subtitle}</Text>
-    </Pressable>
-  );
-}
-
 export default function HomeScreen() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const [dailyTip, setDailyTip] = React.useState<string | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [checkIns, setCheckIns] = useState<CheckInRow[]>([]);
+  const [summary, setSummary] = useState<HistorySummary | null>(null);
+  const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [painLevel, setPainLevel] = useState(5);
+  const [painChange, setPainChange] = useState<PainChangeValue>('Same');
+  const [checkInSubmitting, setCheckInSubmitting] = useState(false);
+  const [celebrationOpen, setCelebrationOpen] = useState(false);
+  const [celebrationChange, setCelebrationChange] = useState<PainChangeValue>('Same');
+  const [pendingCheckInOutbox, setPendingCheckInOutbox] = useState(0);
+
+  const loadDashboard = useCallback(async () => {
+    if (!user) return;
+    setDashboardLoading(true);
+    try {
+      const [histRes, plansRes] = await Promise.all([
+        apiFetchJson<{ checkIns?: CheckInRow[]; summary?: HistorySummary | null }>('/check-ins/history'),
+        apiFetchJson<{ plans?: PlanRow[] }>('/plans'),
+      ]);
+      if (histRes.ok) {
+        setCheckIns(histRes.data.checkIns ?? []);
+        setSummary(histRes.data.summary ?? null);
+      }
+      if (plansRes.ok) {
+        setPlans(plansRes.data.plans ?? []);
+      }
+    } catch {
+      // non-blocking
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) {
+        return () => {};
+      }
+      let cancelled = false;
+      (async () => {
+        await processCheckInOutbox();
+        if (cancelled) return;
+        await loadDashboard();
+        if (cancelled) return;
+        setPendingCheckInOutbox(await getPendingCheckInOutboxCount());
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [user, loadDashboard])
+  );
+
+  const handleInlineCheckIn = useCallback(async () => {
+    const plan = pickPrimaryPlan(plans);
+    if (!plan) {
+      Alert.alert(
+        'Create your plan first',
+        'A quick plan unlocks check-ins and your streak.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Start', onPress: () => router.push('/intake/body-area?reset=1') },
+        ]
+      );
+      return;
+    }
+    setCheckInSubmitting(true);
+    try {
+      const out = await submitCheckInWithOfflineQueue({
+        quick: true,
+        pain_level: Math.round(painLevel),
+        pain_change: painChange,
+        recovery_plan_id: plan.id,
+      });
+      if (out.kind === 'error') {
+        if (out.unauthorized) {
+          Alert.alert('Session expired', 'Please sign in again to continue.');
+        } else {
+          Alert.alert('Could not save', out.message || 'Check your connection and try again.');
+        }
+        return;
+      }
+      if (out.kind === 'queued') {
+        setPendingCheckInOutbox(await getPendingCheckInOutboxCount());
+        return;
+      }
+      setCelebrationChange(painChange);
+      setCelebrationOpen(true);
+      await loadDashboard();
+      await syncDailyWinReminder(plan);
+      setPendingCheckInOutbox(await getPendingCheckInOutboxCount());
+    } catch {
+      Alert.alert('Could not save', 'Check your connection and try again.');
+    } finally {
+      setCheckInSubmitting(false);
+    }
+  }, [plans, painLevel, painChange, loadDashboard, router]);
 
   useEffect(() => {
     Animated.parallel([
@@ -141,22 +210,26 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    if (user) registerPushToken();
-  }, [user]);
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      await registerPushToken();
+      if (cancelled) return;
+      await syncDailyWinReminder(pickPrimaryPlan(plans));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, plans]);
 
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     (async () => {
       try {
-        const session = await import('../lib/auth').then((m) => m.getSession());
-        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-        const res = await fetch(`${apiUrl}/tips/daily`, {
-          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
-        });
+        const res = await apiFetchJson<{ tip?: string }>('/tips/daily');
         if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (!cancelled && data.tip) setDailyTip(data.tip);
+        if (!cancelled && res.data.tip) setDailyTip(res.data.tip);
       } catch {
         // ignore
       }
@@ -177,65 +250,114 @@ export default function HomeScreen() {
   };
 
   if (user) {
+    const primaryPlan = pickPrimaryPlan(plans);
+    const hasPlan = !!primaryPlan;
+    const recoveryState = deriveTodayRecoveryState(checkIns, summary);
+    const focusExercise = primaryPlan ? firstExerciseFromPlan(primaryPlan) : null;
+    const bodyAreaLabel = primaryPlan ? formatBodyAreaLabel(primaryPlan.body_area) : 'Your recovery';
+    const streak = typeof summary?.streak_days === 'number' ? summary.streak_days : 0;
+
+    const onDailyPrimary = () => {
+      if (primaryPlan) {
+        router.push(`/plans/${primaryPlan.id}`);
+      } else {
+        router.push('/intake/body-area?reset=1');
+      }
+    };
+
     return (
       <View style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.headerCompact}>
+        <StatusBar barStyle="dark-content" />
+        <CheckInCelebration
+          visible={celebrationOpen}
+          painChange={celebrationChange}
+          onDismiss={() => setCelebrationOpen(false)}
+        />
+        <View style={styles.todayHeader}>
           <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-            <Text style={styles.logoTextSmall}>Rejuuv</Text>
-            <Text style={styles.welcomeHeading}>Welcome back! 👋</Text>
-            <Text style={styles.userEmail}>{user.email}</Text>
+            <Text style={styles.todayLabel}>Today</Text>
+            <Text style={styles.todayGreeting}>Welcome back</Text>
+            <Text style={styles.todaySub}>{user.email}</Text>
           </Animated.View>
         </View>
-        <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          <Animated.View style={[styles.heroCard, getShadow('card'), { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-            <Text style={styles.heroCardHeading}>How are you feeling today?</Text>
-            <TouchableOpacity style={[styles.heroCardButton, getShadow('button')]} onPress={() => router.push('/check-in/quick')} activeOpacity={0.85}>
-              <Text style={styles.heroCardButtonText}>Log Pain</Text>
-            </TouchableOpacity>
-          </Animated.View>
-
-          <View style={styles.actionGrid}>
-            <View style={styles.actionGridRow}>
-              <SmallActionCard emoji="🩺" title="New Assessment" subtitle="Start fresh" onPress={() => router.push('/intake/body-area')} />
-              <SmallActionCard emoji="⚡" title="Quick check-in" subtitle="10 sec" onPress={() => router.push('/check-in/quick')} />
-            </View>
-            <View style={styles.actionGridRow}>
-              <SmallActionCard emoji="📋" title="My Plans" subtitle="Recovery plans" onPress={() => router.push('/plans')} />
-              <SmallActionCard emoji="🫀" title="Body Map" subtitle="Pain by area" onPress={() => router.push('/dashboard/body-map')} />
-            </View>
-            <View style={styles.actionGridRowSingle}>
-              <SmallActionCard emoji="📈" title="Progress" subtitle="Timeline & streak" onPress={() => router.push('/dashboard/history')} />
-            </View>
-          </View>
-
-          {dailyTip ? (
-            <View style={styles.tipCallout}>
-              <Text style={styles.tipCalloutIcon}>💡</Text>
-              <View style={styles.tipCalloutContent}>
-                <Text style={styles.tipCalloutLabel}>Today's Tip</Text>
-                <Text style={styles.tipCalloutText}>{dailyTip}</Text>
-              </View>
+        <ScrollView
+          style={styles.scrollArea}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {pendingCheckInOutbox > 0 ? (
+            <View style={styles.outboxBanner} accessibilityLiveRegion="polite">
+              <Text style={styles.outboxBannerTitle}>Saved locally</Text>
+              <Text style={styles.outboxBannerBody}>
+                {pendingCheckInOutbox === 1
+                  ? 'One check-in is waiting to sync. It will send quietly when your connection is back.'
+                  : `${pendingCheckInOutbox} check-ins are waiting to sync. They will send when your connection is back.`}
+              </Text>
             </View>
           ) : null}
 
-          <Text style={styles.sectionHeading}>Your Recovery Journey</Text>
-          <View style={styles.timeline}>
-            {RECOVERY_STEPS.map((step, i) => (
-              <TimelineStep
-                key={step.id}
-                emoji={step.emoji}
-                label={step.label}
-                description={step.description}
-                status={step.status}
-                isLast={i === RECOVERY_STEPS.length - 1}
-                delay={100 + i * 80}
-              />
-            ))}
+          {recoveryState !== 'stable' ? <AdaptiveGuidance state={recoveryState} /> : null}
+
+          <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
+            <DailyActionCard
+              recoveryState={recoveryState}
+              hasPlan={hasPlan}
+              bodyAreaLabel={bodyAreaLabel}
+              focusExercise={focusExercise}
+              onPrimaryPress={onDailyPrimary}
+            />
+          </Animated.View>
+
+          {dashboardLoading && checkIns.length === 0 && plans.length === 0 ? (
+            <ActivityIndicator style={styles.inlineLoader} color={Colors.primary} />
+          ) : null}
+
+          <CheckInPrompt
+            hasPlan={hasPlan}
+            painLevel={painLevel}
+            onPainLevelChange={setPainLevel}
+            painChange={painChange}
+            onPainChangeSelect={setPainChange}
+            submitting={checkInSubmitting}
+            onSubmit={handleInlineCheckIn}
+            onOpenFullQuickCheckIn={() => router.push('/check-in/quick')}
+          />
+
+          <ProgressSummary
+            streakDays={streak}
+            totalCheckIns={summary?.total ?? 0}
+            avgPain={summary?.avg_pain ?? null}
+            trend={summary?.trend}
+          />
+
+          <TimelinePreview checkIns={checkIns} onOpenFull={() => router.push('/dashboard/history')} />
+
+          <RecoveryInsightCard dailyTip={dailyTip} trend={summary?.trend} />
+
+          <View style={styles.footerLinks}>
+            <TouchableOpacity onPress={() => router.push('/intake/body-area?reset=1')} hitSlop={8}>
+              <Text style={styles.footerLink}>New assessment</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity onPress={() => router.push('/plans')} hitSlop={8}>
+              <Text style={styles.footerLink}>Plans</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity onPress={() => router.push('/dashboard/body-map')} hitSlop={8}>
+              <Text style={styles.footerLink}>Body map</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity onPress={() => router.push('/dashboard/history')} hitSlop={8}>
+              <Text style={styles.footerLink}>Progress</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity onPress={() => router.push('/check-in/quick')} hitSlop={8}>
+              <Text style={styles.footerLink}>Check-in</Text>
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut} activeOpacity={0.7}>
-            <Text style={styles.signOutText}>Sign Out</Text>
+            <Text style={styles.signOutText}>Sign out</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -270,66 +392,67 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   loadingContainer: { flex: 1, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   container: { flex: 1, backgroundColor: Colors.background },
-  heroSection: { backgroundColor: Colors.primary, paddingTop: 60, paddingBottom: 36, paddingHorizontal: 24 },
-  headerCompact: { backgroundColor: Colors.primary, paddingTop: 56, paddingBottom: 20, paddingHorizontal: 24 },
-  logoText: { fontSize: 36, fontWeight: '800', color: Colors.textInverse, marginBottom: 8, letterSpacing: -0.5 },
-  logoTextSmall: { fontSize: 24, fontWeight: '800', color: Colors.textInverse, marginBottom: 4, letterSpacing: -0.5 },
-  heroHeading: { fontSize: 30, fontWeight: '800', color: Colors.textInverse, lineHeight: 38, marginBottom: 12 },
-  heroSubheading: { fontSize: 16, color: 'rgba(255,255,255,0.85)', lineHeight: 24 },
-  welcomeHeading: { fontSize: 20, fontWeight: '700', color: Colors.textInverse, marginBottom: 2 },
-  userEmail: { fontSize: 13, color: 'rgba(255,255,255,0.75)' },
   scrollArea: { flex: 1 },
   scrollContent: { padding: Spacing.xxl, paddingBottom: 48 },
-  heroCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.xxl,
-    marginBottom: Spacing.xxl,
-    alignItems: 'center',
+  heroSection: { backgroundColor: Colors.primary, paddingTop: 60, paddingBottom: 36, paddingHorizontal: 24 },
+  todayHeader: {
+    paddingTop: 56,
+    paddingBottom: Spacing.lg,
+    paddingHorizontal: Spacing.xxl,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  heroCardHeading: { fontSize: 22, fontWeight: '700', color: Colors.textPrimary, marginBottom: Spacing.xl, textAlign: 'center' },
-  heroCardButton: { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 14, paddingHorizontal: 32, minWidth: 160, alignItems: 'center' },
-  heroCardButtonText: { color: Colors.textInverse, fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
-  actionGrid: { marginBottom: Spacing.xxl },
-  actionGridRow: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.md },
-  actionGridRowSingle: { flexDirection: 'row', justifyContent: 'center' },
-  smallCard: {
-    flex: 1,
+  todayLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    marginBottom: Spacing.xs,
+  },
+  todayGreeting: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    letterSpacing: -0.4,
+    marginBottom: 4,
+  },
+  todaySub: { fontSize: 14, color: Colors.textSecondary },
+  outboxBanner: {
     backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.md,
     padding: Spacing.lg,
-    alignItems: 'center',
+    marginBottom: Spacing.lg,
   },
-  smallCardEmoji: { fontSize: 24, marginBottom: Spacing.xs },
-  smallCardTitle: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary, marginBottom: 2, textAlign: 'center' },
-  smallCardSubtitle: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center' },
-  tipCallout: {
-    backgroundColor: Colors.primaryLight,
-    borderRadius: Radius.md,
-    padding: Spacing.lg,
-    marginBottom: Spacing.xxl,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
+  outboxBannerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  outboxBannerBody: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+  },
+  inlineLoader: { marginVertical: Spacing.md },
+  footerLinks: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.md,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.sm,
   },
-  tipCalloutIcon: { fontSize: 20, marginTop: 2 },
-  tipCalloutContent: { flex: 1 },
-  tipCalloutLabel: { fontSize: 11, fontWeight: '700', color: Colors.primaryDark, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
-  tipCalloutText: { fontSize: 14, color: Colors.textPrimary, lineHeight: 21 },
-  sectionHeading: { fontSize: 20, fontWeight: '700', color: Colors.textPrimary, marginBottom: Spacing.lg },
-  timeline: { marginBottom: Spacing.lg },
-  timelineRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 0 },
-  timelineLeft: { alignItems: 'center', width: 40, marginRight: Spacing.md },
-  timelineIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  timelineEmoji: { fontSize: 18 },
-  timelineLine: { width: 2, height: 28, backgroundColor: Colors.border, marginVertical: 2 },
-  timelineContent: { flex: 1, paddingBottom: Spacing.xl },
-  timelineLabel: { fontSize: 15, fontWeight: '700', color: Colors.textPrimary, marginBottom: 4 },
-  timelineDescription: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  footerLink: { fontSize: 14, fontWeight: '600', color: Colors.primary },
+  footerDot: { fontSize: 14, color: Colors.textMuted, fontWeight: '600' },
+  logoText: { fontSize: 36, fontWeight: '800', color: Colors.textInverse, marginBottom: 8, letterSpacing: -0.5 },
+  heroHeading: { fontSize: 30, fontWeight: '800', color: Colors.textInverse, lineHeight: 38, marginBottom: 12 },
+  heroSubheading: { fontSize: 16, color: 'rgba(255,255,255,0.85)', lineHeight: 24 },
   featureCard: { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.xxl, marginBottom: Spacing.lg, flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.lg },
   featureEmoji: { fontSize: 28, width: 44, textAlign: 'center', marginTop: 2 },
   featureTextContainer: { flex: 1 },

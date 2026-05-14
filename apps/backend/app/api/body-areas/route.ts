@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../lib/db';
+import { logApiRouteFailure } from '../../../lib/api-errors';
+import { enforceIpRateLimit } from '../../../lib/rate-limit';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const ipLimited = await enforceIpRateLimit(request, 'GET /api/body-areas');
+    if (!ipLimited.ok) {
+      return ipLimited.response;
+    }
     // Try to fetch from database first
     const { data, error } = await supabase
       .from('body_area_configs')
@@ -28,7 +34,7 @@ export async function GET() {
 
     return NextResponse.json(bodyAreas);
   } catch (error) {
-    console.error('Error fetching body areas:', error);
+    logApiRouteFailure('GET /api/body-areas', error);
     // Fallback to hardcoded list on error
     return NextResponse.json([
       { id: 'neck', label: 'Neck' },

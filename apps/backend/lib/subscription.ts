@@ -5,7 +5,10 @@ const ACTIVE_STATUSES = ['active', 'trialing'];
 
 /**
  * Returns whether the user has an active (or trialing) Pro subscription.
- * Queries the subscriptions table directly — the source of truth.
+ * Queries the `subscriptions` table directly — the source of truth.
+ *
+ * For HTTP 403 hard gates, use `premium-gate.ts` helpers and calm copy;
+ * product surfaces often use a soft gate (e.g. starter plan) instead.
  */
 export async function getUserSubscriptionStatus(userId: string): Promise<{
   isActive: boolean;

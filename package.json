@@ -19,7 +19,12 @@
     "dev:backend": "cd apps/backend && npm run dev",
     "build": "npm run build --workspaces",
     "lint": "eslint . --ext .ts,.tsx",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "typecheck:backend": "cd apps/backend && npx tsc --noEmit",
+    "typecheck:mobile": "cd apps/mobile && npx tsc --noEmit",
+    "test:backend": "cd apps/backend && npm test",
+    "test:adaptive": "cd apps/backend && npx vitest run lib/adaptive-engine",
+    "validate:release": "node scripts/validate-release.cjs"
   },
   "keywords": [
     "ai",

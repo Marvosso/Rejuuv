@@ -37,9 +37,22 @@ export async function resolveStripeCustomer(
       metadata: { supabase_user_id: userId },
     });
 
-    await supabase
-      .from('users')
-      .upsert({ id: userId, stripe_customer_id: customer.id });
+    const email =
+      authData.user.email?.trim() ||
+      `${userId}@users.rejuuv.internal`;
+
+    const { error: upsertErr } = await supabase.from('users').upsert(
+      {
+        id: userId,
+        email,
+        stripe_customer_id: customer.id,
+      },
+      { onConflict: 'id' }
+    );
+
+    if (upsertErr) {
+      throw new Error(`Failed to persist Stripe customer: ${upsertErr.message}`);
+    }
 
     return { customerId: customer.id, created: true };
   }

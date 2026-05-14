@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,29 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  Modal,
-  Pressable,
+  LayoutAnimation,
   Platform,
+  UIManager,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Video } from 'expo-av';
-import { getSession } from '../../lib/auth';
-import { getLocalVideoForActivity } from '../../lib/localVideos';
-import { Colors, Spacing, Radius } from '../../lib/theme';
+import { apiFetchJson } from '../../lib/api-fetch';
+import { fetchExerciseCatalog, type ExerciseCatalogRow } from '../../lib/exercises';
+import { PlanPhaseExerciseSection } from '../../components/plan/PlanPhaseExerciseSection';
+import { PlanOverviewCard } from '../../components/plan/PlanOverviewCard';
+import { PlanSafetyHabitsAccordion } from '../../components/plan/PlanSafetyHabitsAccordion';
+import { PlanProgressLogAccordion } from '../../components/plan/PlanProgressLogAccordion';
+import {
+  normalizePhaseExercises,
+  phaseExerciseCount,
+  type RecoveryPhaseLike,
+} from '../../lib/recovery-plan-phase';
+import { Colors, Spacing, Radius, getShadow } from '../../lib/theme';
+import { tryParseJson } from '../../lib/safe-json';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface CheckInRecord {
   id: string;
@@ -60,6 +74,11 @@ function painLevelColor(level: number): string {
   return Colors.danger;
 }
 
+function asStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string');
+}
+
 export default function PlanDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -68,42 +87,21 @@ export default function PlanDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [playingVideo, setPlayingVideo] = useState<{ source: number; title: string } | null>(null);
-  const videoWrapperRef = useRef<View>(null);
-
-  // On web, expo-av Video often doesn't respect container size; force the <video> element to fit
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !playingVideo) return;
-    const id = setTimeout(() => {
-      const wrapper = videoWrapperRef.current as unknown as HTMLElement | null;
-      const video = wrapper?.querySelector?.('video');
-      if (video && video.style) {
-        video.style.position = 'relative';
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'contain';
-        video.style.display = 'block';
-      }
-    }, 100);
-    return () => clearTimeout(id);
-  }, [playingVideo]);
+  const [exerciseCatalog, setExerciseCatalog] = useState<ExerciseCatalogRow[]>([]);
+  const scrollRef = useRef<ScrollView>(null);
+  const [phase1LayoutY, setPhase1LayoutY] = useState(0);
+  const [phase1Open, setPhase1Open] = useState(false);
+  const [phase2Open, setPhase2Open] = useState(false);
+  const [phase3Open, setPhase3Open] = useState(false);
 
   const load = async () => {
     if (!id) return;
     try {
       setError(null);
-      const session = await getSession();
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-      const response = await fetch(`${apiUrl}/plans/${id}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-      });
-      if (!response.ok) throw new Error('Failed to load plan');
-      const data = await response.json();
-      setPlan(data.plan);
-      setCheckIns(data.checkIns ?? []);
+      const result = await apiFetchJson<{ plan: PlanRecord; checkIns?: CheckInRecord[] }>(`/plans/${id}`);
+      if (!result.ok) throw new Error(result.message);
+      setPlan(result.data.plan);
+      setCheckIns(result.data.checkIns ?? []);
     } catch {
       setError('Could not load this plan. Pull down to retry.');
     } finally {
@@ -116,18 +114,48 @@ export default function PlanDetailScreen() {
     load();
   }, [id]);
 
+  useEffect(() => {
+    if (!plan) return;
+    let cancelled = false;
+    (async () => {
+      const rows = await fetchExerciseCatalog({
+        body_area: plan.body_area,
+      });
+      if (!cancelled) setExerciseCatalog(rows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [plan?.id, plan?.body_area]);
+
   const onRefresh = () => {
     setRefreshing(true);
     load();
   };
 
+  const handleStartPhase1 = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPhase1Open(true);
+    setPhase2Open(false);
+    setPhase3Open(false);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, phase1LayoutY - 12),
+        animated: true,
+      });
+    });
+  }, [phase1LayoutY]);
+
   const handleStartCheckIn = () => {
     if (!plan) return;
-    const planData = JSON.parse(plan.plan_data);
+    const parsed = tryParseJson<Record<string, unknown>>(plan.plan_data);
+    if (!parsed.ok) {
+      return;
+    }
     router.push(
       '/check-in/?' +
         new URLSearchParams({
-          recovery_plan: JSON.stringify(planData),
+          recovery_plan: JSON.stringify(parsed.data),
           plan_id: plan.id,
         }).toString()
     );
@@ -155,20 +183,64 @@ export default function PlanDetailScreen() {
     );
   }
 
-  const planData = JSON.parse(plan.plan_data);
+  const parsedStoredPlan = tryParseJson<Record<string, unknown>>(plan.plan_data);
+  if (!parsedStoredPlan.ok) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorEmoji}>📋</Text>
+        <Text style={styles.errorTitle}>Plan data could not be read</Text>
+        <Text style={styles.errorSubtitle}>
+          This saved plan looks incomplete. Nothing is wrong with you — try opening another plan from
+          My Plans, or start a fresh plan when you are ready.
+        </Text>
+        <TouchableOpacity style={styles.backLink} onPress={() => router.back()}>
+          <Text style={styles.backLinkText}>← Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const planData = parsedStoredPlan.data as {
+    recovery_plan?: {
+      phase_1_days_1_to_7?: RecoveryPhaseLike;
+      phase_2_days_8_to_21?: RecoveryPhaseLike;
+      phase_3_week_4_and_beyond?: RecoveryPhaseLike;
+    };
+    focus_areas?: unknown;
+    daily_habits?: unknown;
+    red_flags?: unknown;
+  };
+  const rp = planData.recovery_plan;
+  const phase1Block = rp?.phase_1_days_1_to_7;
+  const phase2Block = rp?.phase_2_days_8_to_21;
+  const phase3Block = rp?.phase_3_week_4_and_beyond;
+  const phase1Exercises = normalizePhaseExercises(phase1Block);
+  const phase2Exercises = normalizePhaseExercises(phase2Block);
+  const phase3Exercises = normalizePhaseExercises(phase3Block);
+  const hasAnyExercises =
+    phaseExerciseCount(phase1Block) + phaseExerciseCount(phase2Block) + phaseExerciseCount(phase3Block) >
+    0;
+  const goal1: string = phase1Block?.goal ?? '';
+  const goal2: string = phase2Block?.goal ?? '';
+  const goal3: string = phase3Block?.goal ?? '';
+  const avoid1 = asStringArray(phase1Block?.avoid);
+  const avoid2 = asStringArray(phase2Block?.avoid);
+  const avoid3 = asStringArray(phase3Block?.avoid);
+  const focusAreas = asStringArray(planData.focus_areas);
+  const dailyHabits = asStringArray(planData.daily_habits);
+  const redFlags = asStringArray(planData.red_flags);
+
+  const togglePhase = (n: 1 | 2 | 3) => {
+    if (n === 1) setPhase1Open((o) => !o);
+    if (n === 2) setPhase2Open((o) => !o);
+    if (n === 3) setPhase3Open((o) => !o);
+  };
 
   return (
     <View style={styles.container}>
       {/* Teal header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => {
-            const canGoBack = router.canGoBack();
-            fetch('http://127.0.0.1:7889/ingest/a2a93dc1-6ddc-4917-a00c-d8dc1a903f11',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c1e4e7'},body:JSON.stringify({sessionId:'c1e4e7',location:'plans/[id].tsx:backBtn',message:'GO_BACK from plan detail',data:{canGoBack},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
-            router.back();
-          }}
-          style={styles.backBtn}
-        >
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>← My Plans</Text>
         </TouchableOpacity>
         <Text style={styles.heading}>{bodyAreaLabel(plan.body_area)}</Text>
@@ -185,163 +257,104 @@ export default function PlanDetailScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Focus Areas */}
-        {planData.focus_areas?.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>🎯 Focus Areas</Text>
-            <View style={styles.chipRow}>
-              {planData.focus_areas.map((area: string, i: number) => (
-                <View key={i} style={styles.chip}>
-                  <Text style={styles.chipText}>{area}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
+        <ScreenErrorBoundary>
+        <PlanOverviewCard
+          bodyAreaLabel={bodyAreaLabel(plan.body_area)}
+          focusAreas={focusAreas}
+          phaseLines={[
+            { phase: 1, label: 'Phase 1', range: 'Days 1–7', goal: goal1 },
+            { phase: 2, label: 'Phase 2', range: 'Days 8–21', goal: goal2 },
+            { phase: 3, label: 'Phase 3', range: 'Week 4+', goal: goal3 },
+          ]}
+        />
 
-        {/* Phase 1 exercises */}
-        {planData.recovery_plan?.phase_1_days_1_to_7?.activities?.length > 0 && (
-          <View style={[styles.card, styles.exerciseCard]}>
-            <Text style={styles.cardTitle}>💪 Phase 1 Exercises (Days 1–7)</Text>
-            {planData.recovery_plan.phase_1_days_1_to_7.activities.map(
-              (ex: string, i: number) => {
-                const local = getLocalVideoForActivity(ex);
-                return (
-                  <View key={i} style={styles.exerciseRowWithDemo}>
-                    <View style={styles.exerciseRow}>
-                      <View style={styles.exerciseDot} />
-                      <Text style={styles.exerciseText}>{ex}</Text>
-                    </View>
-                    {local && (
-                      <TouchableOpacity
-                        style={styles.playDemoBtn}
-                        onPress={() => setPlayingVideo({ source: local.source, title: ex })}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.playDemoBtnText}>▶ Play demo</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              }
-            )}
-          </View>
-        )}
+        {hasAnyExercises ? (
+          <TouchableOpacity
+            style={[styles.startPhaseCta, getShadow('button')]}
+            onPress={handleStartPhase1}
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel="Start Phase 1 Day 1"
+          >
+            <Text style={styles.startPhaseCtaTitle}>Start Phase 1 – Day 1</Text>
+            <Text style={styles.startPhaseCtaSub}>Open your first exercises and demos</Text>
+          </TouchableOpacity>
+        ) : null}
 
-        {/* Phase 2 exercises */}
-        {planData.recovery_plan?.phase_2_days_8_to_21?.activities?.length > 0 && (
-          <View style={[styles.card, styles.exerciseCardPhase2]}>
-            <Text style={styles.cardTitle}>🔥 Phase 2 Exercises (Days 8–21)</Text>
-            {planData.recovery_plan.phase_2_days_8_to_21.activities.map(
-              (ex: string, i: number) => {
-                const local = getLocalVideoForActivity(ex);
-                return (
-                  <View key={i} style={styles.exerciseRowWithDemo}>
-                    <View style={styles.exerciseRow}>
-                      <View style={styles.exerciseDot} />
-                      <Text style={styles.exerciseText}>{ex}</Text>
-                    </View>
-                    {local && (
-                      <TouchableOpacity
-                        style={styles.playDemoBtn}
-                        onPress={() => setPlayingVideo({ source: local.source, title: ex })}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.playDemoBtnText}>▶ Play demo</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              }
-            )}
-          </View>
-        )}
-
-        {/* Phase 3 exercises */}
-        {planData.recovery_plan?.phase_3_week_4_and_beyond?.activities?.length > 0 && (
-          <View style={[styles.card, styles.exerciseCardPhase3]}>
-            <Text style={styles.cardTitle}>🏆 Phase 3 Exercises (Week 4+)</Text>
-            {planData.recovery_plan.phase_3_week_4_and_beyond.activities.map(
-              (ex: string, i: number) => {
-                const local = getLocalVideoForActivity(ex);
-                return (
-                  <View key={i} style={styles.exerciseRowWithDemo}>
-                    <View style={styles.exerciseRow}>
-                      <View style={styles.exerciseDot} />
-                      <Text style={styles.exerciseText}>{ex}</Text>
-                    </View>
-                    {local && (
-                      <TouchableOpacity
-                        style={styles.playDemoBtn}
-                        onPress={() => setPlayingVideo({ source: local.source, title: ex })}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.playDemoBtnText}>▶ Play demo</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              }
-            )}
-          </View>
-        )}
-
-        {/* Video modal */}
-        <Modal
-          visible={playingVideo !== null}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setPlayingVideo(null)}
-        >
-          <Pressable style={styles.videoModalOverlay} onPress={() => setPlayingVideo(null)}>
-            <View style={styles.videoModalContent}>
-              {playingVideo && (
-                <>
-                  <Text style={styles.videoModalTitle} numberOfLines={2}>{playingVideo.title}</Text>
-                  <View ref={videoWrapperRef} style={styles.videoPlayerWrapper} collapsable={false}>
-                    <Video
-                      key={playingVideo.title}
-                      source={playingVideo.source}
-                      style={styles.videoPlayer}
-                      useNativeControls
-                      resizeMode="contain"
-                      shouldPlay
-                      isLooping={false}
-                    />
-                  </View>
-                  <TouchableOpacity style={styles.videoModalClose} onPress={() => setPlayingVideo(null)}>
-                    <Text style={styles.videoModalCloseText}>Close</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-          </Pressable>
-        </Modal>
-
-        {/* Check-in history */}
-        <View style={styles.historySection}>
-          <Text style={styles.sectionHeading}>
-            Check-In History
-            <Text style={styles.sectionCount}> ({checkIns.length})</Text>
+        {hasAnyExercises ? (
+          <Text style={styles.exercisesSectionTitle}>Your plan</Text>
+        ) : null}
+        {hasAnyExercises ? (
+          <Text style={styles.exercisesSectionSubtitle}>
+            Expand a phase when you're ready — everything else stays tucked away.
           </Text>
+        ) : null}
+        {hasAnyExercises ? (
+          <PlanPhaseExerciseSection
+            phaseNum={1}
+            title="Phase 1 · Days 1–7"
+            phaseGoal={goal1}
+            exercises={phase1Exercises}
+            avoid={avoid1}
+            catalog={exerciseCatalog}
+            accentColor={Colors.phase1}
+            expanded={phase1Open}
+            onToggle={() => togglePhase(1)}
+            onLayout={(e) => {
+              const y = (e as { nativeEvent: { layout: { y: number } } }).nativeEvent.layout.y;
+              setPhase1LayoutY(y);
+            }}
+          />
+        ) : null}
+        {hasAnyExercises ? (
+          <PlanPhaseExerciseSection
+            phaseNum={2}
+            title="Phase 2 · Days 8–21"
+            phaseGoal={goal2}
+            exercises={phase2Exercises}
+            avoid={avoid2}
+            catalog={exerciseCatalog}
+            accentColor={Colors.phase2}
+            expanded={phase2Open}
+            onToggle={() => togglePhase(2)}
+          />
+        ) : null}
+        {hasAnyExercises ? (
+          <PlanPhaseExerciseSection
+            phaseNum={3}
+            title="Phase 3 · Week 4+"
+            phaseGoal={goal3}
+            exercises={phase3Exercises}
+            avoid={avoid3}
+            catalog={exerciseCatalog}
+            accentColor={Colors.phase3}
+            expanded={phase3Open}
+            onToggle={() => togglePhase(3)}
+          />
+        ) : null}
 
-          {checkIns.length === 0 && (
+        <PlanSafetyHabitsAccordion dailyHabits={dailyHabits} redFlags={redFlags} />
+
+        <PlanProgressLogAccordion checkInCount={checkIns.length}>
+          {checkIns.length === 0 ? (
             <View style={styles.emptyCheckins}>
               <Text style={styles.emptyEmoji}>📝</Text>
               <Text style={styles.emptyTitle}>No check-ins yet</Text>
               <Text style={styles.emptySubtitle}>Complete your first check-in to track your progress.</Text>
             </View>
-          )}
-
+          ) : null}
           {checkIns.map((ci) => {
             let adjustments: any = {};
-            try { adjustments = JSON.parse(ci.adjustments); } catch {}
+            try {
+              adjustments = JSON.parse(ci.adjustments);
+            } catch {}
             const changeStyle = painChangeStyle(ci.pain_change);
             const plColor = painLevelColor(ci.pain_level);
 
@@ -360,9 +373,7 @@ export default function PlanDetailScreen() {
                 <View style={styles.checkInStats}>
                   <View style={styles.stat}>
                     <Text style={styles.statLabel}>Pain Level</Text>
-                    <Text style={[styles.statValue, { color: plColor }]}>
-                      {ci.pain_level}/10
-                    </Text>
+                    <Text style={[styles.statValue, { color: plColor }]}>{ci.pain_level}/10</Text>
                   </View>
                   <View style={styles.statDivider} />
                   <View style={styles.stat}>
@@ -383,7 +394,8 @@ export default function PlanDetailScreen() {
               </View>
             );
           })}
-        </View>
+        </PlanProgressLogAccordion>
+        </ScreenErrorBoundary>
       </ScrollView>
 
       {/* Sticky check-in CTA */}
@@ -501,139 +513,38 @@ const styles = StyleSheet.create({
     padding: Spacing.xxl,
     paddingBottom: 130,
   },
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.xxl,
-    marginBottom: Spacing.lg,
-  },
-  exerciseCard: {
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.success,
-  },
-  exerciseCardPhase2: {
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.secondary,
-  },
-  exerciseCardPhase3: {
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
-  },
-  exerciseRowWithDemo: {
-    marginBottom: Spacing.md,
-  },
-  playDemoBtn: {
-    alignSelf: 'flex-start',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.primary + '20',
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  playDemoBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  videoModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.lg,
-  },
-  videoModalContent: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.lg,
-    width: '100%',
-    maxWidth: 400,
-  },
-  videoModalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    marginBottom: Spacing.md,
-  },
-  videoPlayerWrapper: {
-    width: '100%',
-    height: 240,
-    borderRadius: Radius.md,
-    marginBottom: Spacing.md,
-    backgroundColor: '#000',
-    overflow: 'hidden',
-  },
-  videoPlayer: {
-    width: '100%',
-    height: '100%',
-  },
-  videoModalClose: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  videoModalCloseText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    marginBottom: Spacing.md,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  chip: {
-    backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.primary + '30',
-  },
-  chipText: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  exerciseRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: Spacing.sm,
-    gap: Spacing.md,
-  },
-  exerciseDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: Colors.success,
-    marginTop: 8,
-    flexShrink: 0,
-  },
-  exerciseText: {
-    flex: 1,
-    fontSize: 15,
-    color: Colors.textPrimary,
-    lineHeight: 23,
-  },
-  historySection: {
-    marginTop: Spacing.sm,
-  },
-  sectionHeading: {
+  exercisesSectionTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  exercisesSectionSubtitle: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    lineHeight: 21,
     marginBottom: Spacing.lg,
   },
-  sectionCount: {
-    color: Colors.textSecondary,
-    fontWeight: '400',
-    fontSize: 16,
+  startPhaseCta: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.lg,
+    paddingVertical: Spacing.xl,
+    paddingHorizontal: Spacing.xxl,
+    marginBottom: Spacing.lg,
+    alignItems: 'center',
+  },
+  startPhaseCtaTitle: {
+    color: Colors.textInverse,
+    fontSize: 19,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  startPhaseCtaSub: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 14,
+    marginTop: Spacing.xs,
+    fontWeight: '500',
   },
   emptyCheckins: {
     backgroundColor: Colors.surface,

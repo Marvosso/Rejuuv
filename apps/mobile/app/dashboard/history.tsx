@@ -1,198 +1,151 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  Dimensions,
   TouchableOpacity,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import { LineChart } from 'react-native-chart-kit';
 import { useRouter } from 'expo-router';
-import { getSession } from '../../lib/auth';
+import { useFocusEffect } from '@react-navigation/native';
+import { apiFetchJson } from '../../lib/api-fetch';
+import { Colors, Spacing, Radius, getShadow } from '../../lib/theme';
+import { RecoveryTimelineChart, RecoveryTimelineList } from '../../components/timeline';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
+import type { TimelineApiResponse, TimelineSummary } from '../../lib/recovery-timeline-types';
+import { filterTimelineForPlan } from '../../lib/recovery-timeline-filters';
+import { trackClientTelemetry } from '../../lib/telemetry';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface CheckInRow {
-  id: string;
-  pain_level: number | null;
-  pain_change: string;
-  difficulty: string;
-  recovery_plan_id: string | null;
-  created_at: string;
+function trendColor(trend: TimelineSummary['trend']): string {
+  if (trend === 'improving') return Colors.success;
+  if (trend === 'worsening') return Colors.secondary;
+  return Colors.warning;
 }
 
-interface Summary {
-  total: number;
-  avg_pain: number | null;
-  trend: 'improving' | 'stable' | 'worsening';
-  streak_days?: number;
+function trendLabel(trend: TimelineSummary['trend']): string {
+  if (trend === 'improving') return 'Easing overall';
+  if (trend === 'worsening') return 'Rougher patch';
+  return 'Steady';
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
-
-function formatShortDate(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-function trendColor(trend: Summary['trend']): string {
-  if (trend === 'improving') return '#16a34a';
-  if (trend === 'worsening') return '#dc2626';
-  return '#d97706';
-}
-
-function trendEmoji(trend: Summary['trend']): string {
-  if (trend === 'improving') return '📉';
-  if (trend === 'worsening') return '📈';
-  return '➡️';
-}
-
-function trendLabel(trend: Summary['trend']): string {
-  if (trend === 'improving') return 'Improving';
-  if (trend === 'worsening') return 'Worsening';
-  return 'Stable';
-}
-
-/** Tiny trend arrow for check-in: change from previous day (Better = ↓, Worse = ↑, Same = −). */
-function trendArrow(painChange: string): { char: string; color: string } {
-  if (painChange === 'Better') return { char: '↓', color: '#16a34a' };
-  if (painChange === 'Worse') return { char: '↑', color: '#dc2626' };
-  return { char: '−', color: '#9ca3af' };
-}
-
-const CHART_SKELETON_HEIGHT = 200;
-const CHART_SKELETON_WIDTH = SCREEN_WIDTH - 64;
-
-// ─── Component ────────────────────────────────────────────────────────────────
-
-export default function HistoryScreen() {
+export default function RecoveryTimelineScreen() {
   const router = useRouter();
-  const [allCheckIns, setAllCheckIns] = useState<CheckInRow[]>([]);
-  const [byPlan, setByPlan] = useState<Record<string, CheckInRow[]>>({});
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [data, setData] = useState<TimelineApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<string>('all');
+  const firstFocus = useRef(true);
 
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const session = await getSession();
-        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-        const response = await fetch(`${apiUrl}/check-ins/history`, {
-          headers: {
-            'Content-Type': 'application/json',
-            ...(session?.access_token
-              ? { Authorization: `Bearer ${session.access_token}` }
-              : {}),
-          },
-        });
-
-        if (!response.ok) throw new Error('Failed to load history');
-
-        const data = await response.json();
-        setAllCheckIns(data.checkIns ?? []);
-        setByPlan(data.by_plan ?? {});
-        setSummary(data.summary ?? null);
-      } catch {
-        setError('Could not load your check-in history.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchHistory();
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const result = await apiFetchJson<TimelineApiResponse>('/recovery/timeline?engage=1');
+      if (!result.ok) throw new Error(result.message);
+      const json = result.data;
+      setData(json);
+      setError(null);
+      void trackClientTelemetry('timeline_screen_opened', {
+        entry_count: Array.isArray(json.entries) ? json.entries.length : 0,
+      });
+    } catch {
+      setError('We could not load your recovery timeline. Pull to try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  // Which rows to show based on filter
-  const activeRows: CheckInRow[] =
-    selectedPlan === 'all'
-      ? allCheckIns
-      : byPlan[selectedPlan] ?? [];
+  useFocusEffect(
+    useCallback(() => {
+      load(!firstFocus.current);
+      firstFocus.current = false;
+    }, [load])
+  );
 
-  // Last 30 data points with a pain level for the chart
-  const chartRows = activeRows
-    .filter((r) => r.pain_level !== null)
-    .slice(-30);
+  const planIds = data ? Object.keys(data.by_plan).filter((k) => k !== 'unknown') : [];
+  const hasMultiplePlans = planIds.length > 1;
 
-  // Recalculate summary stats for the filtered set
-  const filteredAvg =
-    chartRows.length > 0
-      ? Math.round(
-          (chartRows.reduce((s, r) => s + (r.pain_level ?? 0), 0) / chartRows.length) * 10
-        ) / 10
-      : null;
+  const filtered = data
+    ? filterTimelineForPlan(data, selectedPlan)
+    : { entries: [], pain_series: [] };
 
-  let filteredTrend: Summary['trend'] = 'stable';
+  const summary = data?.summary;
+  const chartRows = filtered.pain_series;
+
+  let filteredTrend: TimelineSummary['trend'] = 'stable';
   if (chartRows.length >= 4) {
     const mid = Math.floor(chartRows.length / 2);
-    const first = chartRows.slice(0, mid).reduce((s, r) => s + (r.pain_level ?? 0), 0) / mid;
+    const first = chartRows.slice(0, mid).reduce((s, r) => s + r.pain_level, 0) / mid;
     const second =
-      chartRows.slice(mid).reduce((s, r) => s + (r.pain_level ?? 0), 0) /
-      (chartRows.length - mid);
+      chartRows.slice(mid).reduce((s, r) => s + r.pain_level, 0) / (chartRows.length - mid);
     if (second - first < -0.5) filteredTrend = 'improving';
     else if (second - first > 0.5) filteredTrend = 'worsening';
   }
 
-  const planIds = Object.keys(byPlan);
-  const hasMultiplePlans = planIds.length > 1;
-
-  // Build chart data — ensure at least 2 points to avoid chart crash
-  const chartData =
-    chartRows.length >= 2
-      ? {
-          labels: chartRows.map((r) => formatShortDate(r.created_at)),
-          datasets: [
-            {
-              data: chartRows.map((r) => r.pain_level ?? 0),
-              color: () => '#2563eb',
-              strokeWidth: 2,
-            },
-          ],
-        }
+  const filteredAvg =
+    chartRows.length > 0
+      ? Math.round((chartRows.reduce((s, r) => s + r.pain_level, 0) / chartRows.length) * 10) / 10
       : null;
+
+  const checkInCount =
+    selectedPlan === 'all'
+      ? (summary?.total ?? 0)
+      : filtered.entries.filter((e) => e.kind === 'check_in').length;
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/')} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+          style={styles.backBtn}
+        >
           <Text style={styles.backBtnText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.heading}>Pain History</Text>
-        <Text style={styles.subheading}>Last 90 days of check-ins</Text>
+        <Text style={styles.heading}>Recovery timeline</Text>
+        <Text style={styles.subheading}>
+          Your logs, milestones, and plan changes — in one calm story.
+        </Text>
         {summary && typeof summary.streak_days === 'number' && summary.streak_days > 0 && (
           <View style={styles.streakBadge}>
-            <Text style={styles.streakEmoji}>🔥</Text>
-            <Text style={styles.streakText}>{summary.streak_days} day streak</Text>
+            <Text style={styles.streakText}>
+              {summary.streak_days} day{summary.streak_days === 1 ? '' : 's'} of continuity
+            </Text>
           </View>
         )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {loading ? (
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => load(true)}
+            tintColor={Colors.primary}
+          />
+        }
+      >
+        {loading && !data ? (
           <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#2563eb" />
-            <Text style={styles.loadingText}>Loading history...</Text>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={styles.loadingText}>Loading your journey…</Text>
           </View>
-        ) : error ? (
+        ) : error && !data ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>{error}</Text>
           </View>
-        ) : allCheckIns.length === 0 ? (
+        ) : data && data.entries.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyEmoji}>📊</Text>
-            <Text style={styles.emptyTitle}>No check-ins yet</Text>
+            <Text style={styles.emptyTitle}>Nothing on the timeline yet</Text>
             <Text style={styles.emptySubtitle}>
-              Complete your first check-in to start tracking your pain progression.
+              When you check in, your recovery path starts to take shape here — setbacks included.
             </Text>
           </View>
-        ) : (
+        ) : data ? (
           <>
-            {/* Plan filter — only show if user has multiple plans */}
             {hasMultiplePlans && (
               <View style={styles.filterRow}>
                 <TouchableOpacity
@@ -227,316 +180,146 @@ export default function HistoryScreen() {
               </View>
             )}
 
-            {/* Line chart */}
-            <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>Pain Level Over Time</Text>
-              {chartData ? (
-                <LineChart
-                  data={chartData}
-                  width={SCREEN_WIDTH - 64}
-                  height={200}
-                  yAxisSuffix=""
-                  yAxisInterval={1}
-                  fromZero
-                  chartConfig={{
-                    backgroundColor: '#ffffff',
-                    backgroundGradientFrom: '#ffffff',
-                    backgroundGradientTo: '#ffffff',
-                    decimalPlaces: 0,
-                    color: () => '#2563eb',
-                    labelColor: () => '#6b7280',
-                    propsForDots: {
-                      r: '4',
-                      strokeWidth: '2',
-                      stroke: '#2563eb',
-                    },
-                    propsForBackgroundLines: {
-                      stroke: '#f3f4f6',
-                      strokeWidth: 1,
-                    },
-                  }}
-                  bezier
-                  style={styles.chart}
-                  withHorizontalLabels
-                  withVerticalLabels={chartRows.length <= 15}
-                  segments={5}
-                />
-              ) : (
-                <View style={styles.chartSkeletonWrap}>
-                  <View style={styles.chartSkeleton}>
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <View
-                        key={i}
-                        style={[
-                          styles.chartSkeletonGridLine,
-                          { top: (i / 5) * (CHART_SKELETON_HEIGHT - 24) + 12 },
-                        ]}
-                      />
-                    ))}
-                    <View style={styles.chartSkeletonBars}>
-                      {[40, 65, 35, 70, 50, 45].map((h, i) => (
-                        <View
-                          key={i}
-                          style={[
-                            styles.chartSkeletonBar,
-                            {
-                              height: Math.max(8, (h / 100) * (CHART_SKELETON_HEIGHT - 32)),
-                            },
-                          ]}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                  <View style={styles.chartSkeletonOverlay}>
-                    <Text style={styles.chartSkeletonOverlayText}>
-                      Your progress will appear here after 2 check-ins.
-                    </Text>
-                  </View>
-                </View>
-              )}
-              <Text style={styles.chartNote}>Y-axis: pain level (0–10)</Text>
+            <View style={[styles.chartCard, getShadow('card')]}>
+              <Text style={styles.chartTitle}>Pain over time</Text>
+              <Text style={styles.chartSub}>0–10 · last 90 days in this view</Text>
+              <ScreenErrorBoundary>
+                <RecoveryTimelineChart series={chartRows} />
+              </ScreenErrorBoundary>
             </View>
 
-            {/* Summary cards */}
-            <Text style={styles.sectionTitle}>Summary</Text>
+            <Text style={styles.sectionTitle}>At a glance</Text>
             <View style={styles.summaryRow}>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValueLarge}>
-                  {selectedPlan === 'all' ? (summary?.total ?? 0) : activeRows.length}
-                </Text>
+              <View style={[styles.summaryCard, getShadow('card')]}>
+                <Text style={styles.summaryValueLarge}>{checkInCount}</Text>
                 <Text style={styles.summaryLabelMuted}>Check-ins</Text>
               </View>
-              <View style={styles.summaryCard}>
+              <View style={[styles.summaryCard, getShadow('card')]}>
                 <Text style={styles.summaryValueLarge}>
                   {filteredAvg !== null ? filteredAvg : '—'}
                 </Text>
-                <Text style={styles.summaryLabelMuted}>Avg Pain</Text>
+                <Text style={styles.summaryLabelMuted}>Avg pain</Text>
               </View>
-              <View style={[styles.summaryCard, styles.summaryCardWide]}>
+              <View style={[styles.summaryCard, styles.summaryCardWide, getShadow('card')]}>
                 <Text style={[styles.summaryValueLarge, { color: trendColor(filteredTrend) }]}>
-                  {trendEmoji(filteredTrend)} {trendLabel(filteredTrend)}
+                  {trendLabel(filteredTrend)}
                 </Text>
                 <Text style={styles.summaryLabelMuted}>Trend</Text>
               </View>
             </View>
 
-            {/* Recent check-in list */}
-            <Text style={styles.sectionTitle}>Recent Check-ins</Text>
-            {activeRows
-              .slice()
-              .reverse()
-              .slice(0, 10)
-              .map((ci) => {
-                const arrow = trendArrow(ci.pain_change);
-                return (
-                  <View key={ci.id} style={styles.checkInRow}>
-                    <View style={styles.checkInLeft}>
-                      <View style={[styles.checkInTrendArrow, { backgroundColor: arrow.color + '20' }]}>
-                        <Text style={[styles.checkInTrendArrowText, { color: arrow.color }]}>
-                          {arrow.char}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.checkInDot,
-                          {
-                            backgroundColor:
-                              ci.pain_change === 'Better'
-                                ? '#16a34a'
-                                : ci.pain_change === 'Worse'
-                                  ? '#dc2626'
-                                  : '#d97706',
-                          },
-                        ]}
-                      />
-                      <View>
-                        <Text style={styles.checkInPain}>
-                          {ci.pain_level !== null ? `Pain ${ci.pain_level}/10` : 'No level recorded'}
-                        </Text>
-                        <Text style={styles.checkInMeta}>
-                          {ci.pain_change} · {ci.difficulty}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.checkInDate}>
-                      {formatShortDate(ci.created_at)}
-                    </Text>
-                  </View>
-                );
-              })}
+            <Text style={styles.sectionTitle}>Your story</Text>
+            <Text style={styles.storyHint}>
+              Newest moments are at the bottom — scroll to see how far you have come.
+            </Text>
+            <ScreenErrorBoundary>
+              <RecoveryTimelineList entries={filtered.entries} />
+            </ScreenErrorBoundary>
           </>
-        )}
+        ) : null}
       </ScrollView>
     </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
-    backgroundColor: '#ffffff',
+    backgroundColor: Colors.surface,
     paddingTop: 56,
-    paddingBottom: 16,
-    paddingHorizontal: 20,
+    paddingBottom: Spacing.lg,
+    paddingHorizontal: Spacing.xxl,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: Colors.border,
   },
   backBtn: { marginBottom: 6 },
-  backBtnText: { color: '#2563eb', fontSize: 15, fontWeight: '500' },
-  heading: { fontSize: 24, fontWeight: '700', color: '#111827', marginBottom: 2 },
-  subheading: { fontSize: 13, color: '#6b7280' },
+  backBtnText: { color: Colors.primary, fontSize: 15, fontWeight: '600' },
+  heading: { fontSize: 24, fontWeight: '800', color: Colors.textPrimary, marginBottom: 4 },
+  subheading: { fontSize: 14, color: Colors.textSecondary, lineHeight: 20 },
   streakBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    marginTop: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
     alignSelf: 'flex-start',
-    backgroundColor: '#fef3c7',
-    borderRadius: 20,
-    gap: 6,
+    backgroundColor: Colors.primaryLight,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.primary + '33',
   },
-  streakEmoji: { fontSize: 18 },
-  streakText: { fontSize: 14, fontWeight: '700', color: '#92400e' },
-  content: { padding: 20, paddingBottom: 40 },
+  streakText: { fontSize: 14, fontWeight: '700', color: Colors.primaryDark },
+  content: { padding: Spacing.xxl, paddingBottom: 48 },
   centered: { alignItems: 'center', paddingVertical: 40, gap: 12 },
-  loadingText: { fontSize: 15, color: '#6b7280' },
+  loadingText: { fontSize: 15, color: Colors.textSecondary },
   errorCard: {
-    backgroundColor: '#fef2f2',
-    borderRadius: 10,
-    padding: 14,
+    backgroundColor: Colors.dangerLight,
+    borderRadius: Radius.md,
+    padding: Spacing.lg,
     borderLeftWidth: 4,
-    borderLeftColor: '#ef4444',
+    borderLeftColor: Colors.danger,
   },
-  errorText: { color: '#991b1b', fontSize: 14 },
+  errorText: { color: Colors.dangerDark, fontSize: 14 },
   emptyCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 32,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xxxl,
     alignItems: 'center',
-    marginTop: 40,
+    marginTop: Spacing.xxxl,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  emptyEmoji: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 8 },
-  emptySubtitle: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22 },
-
-  // Filter chips
-  filterRow: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
-  filterChip: {
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#2563eb',
-    backgroundColor: '#ffffff',
-  },
-  filterChipActive: { backgroundColor: '#2563eb' },
-  filterChipText: { fontSize: 13, fontWeight: '600', color: '#2563eb' },
-  filterChipTextActive: { color: '#ffffff' },
-
-  // Chart
-  chartCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-    elevation: 2,
-  },
-  chartTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 12 },
-  chart: { borderRadius: 10, marginLeft: -8 },
-  chartSkeletonWrap: {
-    position: 'relative',
-    width: CHART_SKELETON_WIDTH,
-    height: CHART_SKELETON_HEIGHT,
-  },
-  chartSkeleton: {
-    width: CHART_SKELETON_WIDTH,
-    height: CHART_SKELETON_HEIGHT,
-    backgroundColor: '#f9fafb',
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  chartSkeletonGridLine: {
-    position: 'absolute',
-    left: 8,
-    right: 8,
-    height: 1,
-    backgroundColor: '#e5e7eb',
-  },
-  chartSkeletonBars: {
-    position: 'absolute',
-    bottom: 16,
-    left: 24,
-    right: 24,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  chartSkeletonBar: {
-    flex: 1,
-    backgroundColor: '#d1d5db',
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
-    minHeight: 8,
-  },
-  chartSkeletonOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-  },
-  chartSkeletonOverlayText: {
+  emptyTitle: { fontSize: 20, fontWeight: '800', color: Colors.textPrimary, marginBottom: Spacing.sm },
+  emptySubtitle: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#6b7280',
+    color: Colors.textSecondary,
     textAlign: 'center',
-    paddingHorizontal: 24,
+    lineHeight: 22,
   },
-  chartNote: { fontSize: 11, color: '#9ca3af', marginTop: 8, textAlign: 'center' },
-
-  // Summary
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: '#111827', marginBottom: 12 },
-  summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 24 },
+  filterRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg, flexWrap: 'wrap' },
+  filterChip: {
+    paddingVertical: 8,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: Radius.full,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.surface,
+  },
+  filterChipActive: { backgroundColor: Colors.primary },
+  filterChipText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
+  filterChipTextActive: { color: Colors.textInverse },
+  chartCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xxl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  chartTitle: { fontSize: 16, fontWeight: '800', color: Colors.textPrimary, marginBottom: 4 },
+  chartSub: { fontSize: 12, color: Colors.textMuted, marginBottom: Spacing.sm },
+  sectionTitle: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary, marginBottom: Spacing.sm },
+  storyHint: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+    lineHeight: 18,
+  },
+  summaryRow: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.xxl },
   summaryCard: {
     flex: 1,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    padding: Spacing.lg,
     alignItems: 'center',
-    elevation: 1,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  summaryCardWide: { flex: 1.4 },
-  summaryValueLarge: { fontSize: 26, fontWeight: '800', color: '#111827', marginBottom: 4 },
-  summaryLabelMuted: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '500' },
-  summaryValue: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  summaryLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  // Check-in list
-  checkInTrendArrow: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
+  summaryCardWide: { flex: 1.35 },
+  summaryValueLarge: { fontSize: 22, fontWeight: '800', color: Colors.textPrimary, marginBottom: 4 },
+  summaryLabelMuted: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    fontWeight: '600',
   },
-  checkInTrendArrowText: { fontSize: 12, fontWeight: '700' },
-  checkInRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#ffffff',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
-    elevation: 1,
-  },
-  checkInLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  checkInDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
-  checkInPain: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  checkInMeta: { fontSize: 12, color: '#6b7280', marginTop: 1 },
-  checkInDate: { fontSize: 12, color: '#9ca3af' },
 });

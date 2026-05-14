@@ -1,9 +1,24 @@
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
+import * as Notifications from 'expo-notifications';
 import { AuthProvider, useAuth } from '../lib/auth-context';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { assertPublicRuntimeConfig } from '../lib/runtime-env';
+import { initCrashReporting } from '../lib/crash-reporting';
+import { processCheckInOutbox } from '../lib/check-in-outbox';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 // Public routes that don't require authentication
-const PUBLIC_SEGMENTS = ['auth'];
+const PUBLIC_SEGMENTS = ['auth', 'legal'];
 
 function AuthGuard() {
   const { user, loading } = useAuth();
@@ -29,14 +44,35 @@ function AuthGuard() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    WebBrowser.maybeCompleteAuthSession();
+  }, []);
+
+  useEffect(() => {
+    assertPublicRuntimeConfig();
+    initCrashReporting();
+  }, []);
+
+  useEffect(() => {
+    void processCheckInOutbox();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void processCheckInOutbox();
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   return (
-    <AuthProvider>
-      <AuthGuard />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-        }}
-      />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AuthGuard />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+          }}
+        />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

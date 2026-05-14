@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import Svg, { Circle, Path, G, Rect, Ellipse } from 'react-native-svg';
 import { useRouter } from 'expo-router';
-import { getSession } from '../../lib/auth';
+import { apiFetchJson } from '../../lib/api-fetch';
+import { ScreenErrorBoundary } from '../../components/ScreenErrorBoundary';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -108,20 +109,9 @@ export default function BodyMapScreen() {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const session = await getSession();
-        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
-        const response = await fetch(`${apiUrl}/assessments/history`, {
-          headers: {
-            'Content-Type': 'application/json',
-            ...(session?.access_token
-              ? { Authorization: `Bearer ${session.access_token}` }
-              : {}),
-          },
-        });
-
-        if (!response.ok) throw new Error('Failed to load history');
-
-        const data = await response.json();
+        const result = await apiFetchJson<{ areas?: AreaData[] }>('/assessments/history');
+        if (!result.ok) throw new Error(result.message);
+        const data = result.data;
         const map: Record<string, AreaData> = {};
         for (const area of data.areas ?? []) {
           const mappedKeys = AREA_KEY_MAP[area.body_area] ?? [area.body_area];
@@ -183,6 +173,7 @@ export default function BodyMapScreen() {
           </View>
         ) : (
           <>
+            <ScreenErrorBoundary>
             {error && (
               <View style={styles.errorCard}>
                 <Text style={styles.errorText}>{error}</Text>
@@ -273,6 +264,7 @@ export default function BodyMapScreen() {
                 </TouchableOpacity>
               );
             })}
+            </ScreenErrorBoundary>
           </>
         )}
       </ScrollView>
@@ -345,7 +337,7 @@ export default function BodyMapScreen() {
                       style={styles.modalStartButton}
                       onPress={() => {
                         setModalVisible(false);
-                        router.push('/intake/body-area');
+                        router.push('/intake/body-area?reset=1');
                       }}
                     >
                       <Text style={styles.modalStartButtonText}>Start Assessment</Text>
