@@ -25,6 +25,7 @@ import {
   getPendingCheckInOutboxCount,
   submitCheckInWithOfflineQueue,
 } from '../lib/check-in-outbox';
+import { deriveTodayRecoveryState } from '../lib/today-recovery-state';
 import { Colors, Spacing, Radius } from '../lib/theme';
 import { CheckInCelebration, type PainChangeValue } from '../components/check-in-celebration';
 import {
@@ -246,7 +247,12 @@ export default function HomeScreen() {
   }
 
   const handleSignOut = async () => {
-    try { await signOut(); } catch (error) { console.error('Error signing out:', error); }
+    try {
+      await signOut();
+      router.replace('/auth/login');
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
   };
 
   if (user) {
@@ -354,11 +360,11 @@ export default function HomeScreen() {
             <TouchableOpacity onPress={() => router.push('/check-in/quick')} hitSlop={8}>
               <Text style={styles.footerLink}>Check-in</Text>
             </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity onPress={() => void handleSignOut()} hitSlop={8}>
+              <Text style={styles.footerLink}>Sign out</Text>
+            </TouchableOpacity>
           </View>
-
-          <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut} activeOpacity={0.7}>
-            <Text style={styles.signOutText}>Sign out</Text>
-          </TouchableOpacity>
         </ScrollView>
       </View>
     );
@@ -463,6 +469,4 @@ const styles = StyleSheet.create({
   loginLink: { alignItems: 'center', paddingVertical: Spacing.md },
   loginLinkText: { color: Colors.textSecondary, fontSize: 15 },
   loginLinkBold: { color: Colors.primary, fontWeight: '700' },
-  signOutButton: { alignItems: 'center', paddingVertical: Spacing.lg, marginTop: Spacing.md },
-  signOutText: { color: Colors.textSecondary, fontSize: 15, fontWeight: '500' },
 });

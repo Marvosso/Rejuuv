@@ -31,16 +31,22 @@ export default function BodyAreaScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const cardAnims = useRef(BODY_AREAS.map(() => new Animated.Value(0))).current;
 
+  /**
+   * Apply ?reset=1 once, then strip the query. If we leave ?reset=1 on the URL while this screen
+   * stays mounted in the stack, a later ctxBody update from "Continue" re-runs this effect and
+   * resetWizard() wipes the wizard — Summary then shows "Nothing to show yet".
+   */
   useEffect(() => {
     if (resetParam === '1') {
       resetWizard();
       setSelected(null);
+      router.replace('/intake/body-area');
       return;
     }
     if (ctxBody) {
       setSelected(ctxBody);
     }
-  }, [resetParam, resetWizard, ctxBody]);
+  }, [resetParam, resetWizard, ctxBody, router]);
 
   useEffect(() => {
     Animated.parallel([

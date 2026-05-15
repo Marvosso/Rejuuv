@@ -28,13 +28,17 @@ function AuthGuard() {
   useEffect(() => {
     if (loading) return;
 
-    const inPublicRoute = PUBLIC_SEGMENTS.includes(segments[0] as string);
+    const seg0 = segments[0] as string;
+    const inPublicRoute = PUBLIC_SEGMENTS.includes(seg0);
+
+    // Logged-in users should not stay on login/signup (e.g. after iOS swipe-back).
+    if (user && seg0 === 'auth') {
+      const t = setTimeout(() => router.replace('/'), 0);
+      return () => clearTimeout(t);
+    }
 
     if (!user && !inPublicRoute) {
-      // Defer until after the root navigator mounts — immediate replace on cold start can crash on iOS release builds.
-      const t = setTimeout(() => {
-        router.replace('/auth/login');
-      }, 0);
+      const t = setTimeout(() => router.replace('/auth/login'), 0);
       return () => clearTimeout(t);
     }
     return undefined;
@@ -71,7 +75,15 @@ export default function RootLayout() {
           screenOptions={{
             headerShown: false,
           }}
-        />
+        >
+          <Stack.Screen
+            name="index"
+            options={{
+              gestureEnabled: false,
+              fullScreenGestureEnabled: false,
+            }}
+          />
+        </Stack>
       </AuthProvider>
     </ErrorBoundary>
   );

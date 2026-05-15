@@ -35,7 +35,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      router.push('/');
+      router.replace('/');
     } catch (error: any) {
       let msg = 'Something went wrong. Please try again.';
       if (error.message?.includes('Invalid login credentials') || error.status === 400)
